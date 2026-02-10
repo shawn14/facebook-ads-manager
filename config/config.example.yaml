@@ -1,0 +1,94 @@
+# Facebook Ads Manager Configuration
+# Copy this file to config.yaml and fill in your credentials
+
+facebook:
+  # Get these from: https://developers.facebook.com/apps/2648986878795029/marketing-api/tools/
+  app_id: "YOUR_APP_ID"
+  app_secret: "YOUR_APP_SECRET"
+  access_token: "YOUR_ACCESS_TOKEN"
+
+  # Your ad account ID (format: act_XXXXXXXXXX)
+  ad_account_id: "act_XXXXXXXXXX"
+
+  # Your Facebook Page ID (required for creating creatives)
+  page_id: "YOUR_PAGE_ID"
+
+  # API version
+  api_version: "v19.0"
+
+# AI Image Generation
+ai_image:
+  # Provider: "google" (Gemini 2.5 Flash Image) or "openai" (DALL-E 3)
+  # Google Gemini is recommended for faster, more cost-effective generation
+  provider: "google"
+
+# OpenAI API (for DALL-E 3 image generation and GPT-4 ad copy)
+openai:
+  # Get your API key from: https://platform.openai.com/api-keys
+  api_key: "YOUR_OPENAI_API_KEY"
+
+# Google AI API (for Gemini image generation)
+google:
+  # Get your API key from: https://aistudio.google.com/app/apikey
+  api_key: "YOUR_GOOGLE_API_KEY"
+
+campaigns:
+  # Default campaign settings
+  default_objective: "LINK_CLICKS"  # CONVERSIONS, REACH, BRAND_AWARENESS, etc.
+  default_bid_strategy: "LOWEST_COST_WITHOUT_CAP"
+
+  # Budget defaults (in USD)
+  default_daily_budget: 50
+  min_daily_budget: 10
+  max_daily_budget: 5000
+
+targeting:
+  # Default targeting parameters
+  default_countries: ["US"]
+  default_age_min: 25
+  default_age_max: 65
+
+optimization:
+  # Auto-pause settings
+  min_roas: 1.5  # Minimum return on ad spend
+  min_ctr: 0.5   # Minimum click-through rate (%)
+  max_cpa: 50    # Maximum cost per acquisition
+
+  # Budget optimization
+  rebalance_frequency: "daily"  # daily, weekly
+  min_budget_change: 10  # Minimum % change to trigger rebalance
+
+  # A/B testing
+  test_duration_days: 7
+  min_sample_size: 100  # Minimum conversions before declaring winner
+  confidence_level: 0.95  # 95% confidence for statistical significance
+
+analytics:
+  # Reporting defaults
+  default_metrics:
+    - "impressions"
+    - "clicks"
+    - "spend"
+    - "ctr"
+    - "cpc"
+    - "conversions"
+    - "cost_per_conversion"
+    - "roas"
+
+  # Data retention
+  cache_ttl_hours: 1
+
+reporting:
+  # Alert thresholds
+  alert_on_high_cpa: true
+  alert_on_low_roas: true
+  alert_email: "your-email@example.com"
+
+  # Export formats
+  default_format: "csv"  # csv, json, excel
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/fbads.log"
+  max_size_mb: 10
+  backup_count: 5

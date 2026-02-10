@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block title %}Optimization - Facebook Ads Manager{% endblock %}
+
+{% block content %}
+<div x-data="optimization()" x-init="init()" class="py-6">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+                Budget Optimization
+            </h1>
+            <p class="mt-2 text-sm text-gray-600">
+                Automatically optimize budget allocation based on campaign performance
+            </p>
+        </div>
+
+        <!-- Optimization Actions -->
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-3 mb-8">
+            <!-- Optimize Budgets -->
+            <div class="bg-white shadow rounded-lg p-6">
+                <div class="flex items-center mb-4">
+                    <svg class="h-8 w-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                    </svg>
+                    <h3 class="ml-3 text-lg font-medium text-gray-900">Optimize Budgets</h3>
+                </div>
+                <p class="text-sm text-gray-600 mb-4">
+                    Increase budgets for high-performing campaigns, decrease for low performers
+                </p>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Min ROAS</label>
+                        <input type="number" x-model="optimizeParams.minRoas" step="0.1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                    </div>
+                    <button @click="optimizeBudgets(true)" class="w-full bg-blue-100 text-blue-700 px-4 py-2 rounded-md hover:bg-blue-200 text-sm font-medium">
+                        Preview Changes
+                    </button>
+                    <button @click="optimizeBudgets(false)" class="w-full bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">
+                        Apply Changes
+                    </button>
+                </div>
+            </div>
+
+            <!-- Pause Underperformers -->
+            <div class="bg-white shadow rounded-lg p-6">
+                <div class="flex items-center mb-4">
+                    <svg class="h-8 w-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <h3 class="ml-3 text-lg font-medium text-gray-900">Pause Underperformers</h3>
+                </div>
+                <p class="text-sm text-gray-600 mb-4">
+                    Automatically pause campaigns with low CTR or poor performance
+                </p>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Min CTR (%)</label>
+                        <input type="number" x-model="pauseParams.minCtr" step="0.1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Min Spend ($)</label>
+                        <input type="number" x-model="pauseParams.minSpend" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                    </div>
+                    <button @click="pauseUnderperformers(true)" class="w-full bg-red-100 text-red-700 px-4 py-2 rounded-md hover:bg-red-200 text-sm font-medium">
+                        Preview
+                    </button>
+                    <button @click="pauseUnderperformers(false)" class="w-full bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 text-sm font-medium">
+                        Pause Campaigns
+                    </button>
+                </div>
+            </div>
+
+            <!-- Rebalance Portfolio -->
+            <div class="bg-white shadow rounded-lg p-6">
+                <div class="flex items-center mb-4">
+                    <svg class="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"></path>
+                    </svg>
+                    <h3 class="ml-3 text-lg font-medium text-gray-900">Rebalance Portfolio</h3>
+                </div>
+                <p class="text-sm text-gray-600 mb-4">
+                    Redistribute total budget based on ROAS performance
+                </p>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Total Budget ($)</label>
+                        <input type="number" x-model="rebalanceParams.totalBudget" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                    </div>
+                    <button @click="rebalancePortfolio(true)" class="w-full bg-green-100 text-green-700 px-4 py-2 rounded-md hover:bg-green-200 text-sm font-medium">
+                        Preview Allocation
+                    </button>
+                    <button @click="rebalancePortfolio(false)" class="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 text-sm font-medium">
+                        Apply Rebalance
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div x-show="results.length > 0" class="bg-white shadow rounded-lg overflow-hidden">
+            <div class="px-4 py-5 sm:px-6 border-b border-gray-200">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900" x-text="resultTitle">Results</h3>
+                    <span class="text-sm text-gray-500" x-text="isDryRun ? '(Preview Mode)' : '(Applied)'"></span>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Campaign</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Current</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">New</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Change</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="result in results" :key="result.campaign_id">
+                            <tr>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="result.campaign_name"></td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <span x-show="result.old_budget !== undefined" x-text="formatCurrency(result.old_budget)"></span>
+                                    <span x-show="result.spend !== undefined" x-text="formatCurrency(result.spend)"></span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <span x-show="result.new_budget !== undefined" x-text="formatCurrency(result.new_budget)"></span>
+                                    <span x-show="result.new_budget === undefined" class="text-red-600">PAUSED</span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                    <span x-show="result.change_pct !== undefined"
+                                          :class="result.change_pct > 0 ? 'text-green-600' : 'text-red-600'"
+                                          x-text="(result.change_pct > 0 ? '+' : '') + result.change_pct.toFixed(1) + '%'"></span>
+                                </td>
+                                <td class="px-6 py-4 text-sm text-gray-500" x-text="result.reason"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div x-show="results.length === 0 && hasRun" class="bg-white shadow rounded-lg p-6 text-center">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">No changes needed</h3>
+            <p class="mt-1 text-sm text-gray-500">All campaigns are performing optimally</p>
+        </div>
+    </div>
+</div>
+
+<script>
+function optimization() {
+    return {
+        optimizeParams: {
+            minRoas: 1.5
+        },
+        pauseParams: {
+            minCtr: 0.5,
+            minSpend: 100
+        },
+        rebalanceParams: {
+            totalBudget: 1000
+        },
+        results: [],
+        resultTitle: '',
+        isDryRun: true,
+        hasRun: false,
+
+        async init() {
+            // Initialize
+        },
+
+        async optimizeBudgets(dryRun) {
+            this.isDryRun = dryRun;
+            this.hasRun = true;
+            this.resultTitle = 'Budget Optimization Results';
+
+            try {
+                const params = new URLSearchParams({
+                    dry_run: dryRun,
+                    min_roas: this.optimizeParams.minRoas
+                });
+
+                const response = await fetch(`/api/optimization/budgets?${params}`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) throw new Error('Optimization failed');
+
+                const data = await response.json();
+                this.results = data.changes;
+
+                if (!dryRun) {
+                    notify(`Budget optimization applied to ${data.count} campaigns`);
+                }
+            } catch (error) {
+                console.error('Failed to optimize budgets:', error);
+                notify('Failed to optimize budgets', 'error');
+            }
+        },
+
+        async pauseUnderperformers(dryRun) {
+            this.isDryRun = dryRun;
+            this.hasRun = true;
+            this.resultTitle = 'Underperforming Campaigns';
+
+            try {
+                const params = new URLSearchParams({
+                    dry_run: dryRun,
+                    min_ctr: this.pauseParams.minCtr,
+                    min_spend: this.pauseParams.minSpend
+                });
+
+                const response = await fetch(`/api/optimization/pause-underperformers?${params}`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) throw new Error('Failed to pause campaigns');
+
+                const data = await response.json();
+                this.results = data.paused_campaigns;
+
+                if (!dryRun && data.count > 0) {
+                    notify(`Paused ${data.count} underperforming campaigns`);
+                }
+            } catch (error) {
+                console.error('Failed to pause underperformers:', error);
+                notify('Failed to pause underperformers', 'error');
+            }
+        },
+
+        async rebalancePortfolio(dryRun) {
+            this.isDryRun = dryRun;
+            this.hasRun = true;
+            this.resultTitle = 'Portfolio Rebalance';
+
+            try {
+                const params = new URLSearchParams({
+                    dry_run: dryRun,
+                    total_budget: this.rebalanceParams.totalBudget
+                });
+
+                const response = await fetch(`/api/optimization/rebalance?${params}`, {
+                    method: 'POST'
+                });
+
+                if (!response.ok) throw new Error('Rebalance failed');
+
+                const data = await response.json();
+                this.results = data.allocations;
+
+                if (!dryRun) {
+                    notify(`Portfolio rebalanced with $${data.total_budget} total budget`);
+                }
+            } catch (error) {
+                console.error('Failed to rebalance portfolio:', error);
+                notify('Failed to rebalance portfolio', 'error');
+            }
+        },
+
+        formatCurrency(value) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(value);
+        }
+    };
+}
+</script>
+{% endblock %}

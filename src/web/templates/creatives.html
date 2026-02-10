@@ -1,0 +1,419 @@
+{% extends "base.html" %}
+
+{% block title %}Creative Library - Facebook Ads Manager{% endblock %}
+
+{% block content %}
+<div x-data="creatives()" x-init="init()" class="py-6">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="md:flex md:items-center md:justify-between mb-6">
+            <div class="flex-1 min-w-0">
+                <h1 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+                    Creative Library
+                </h1>
+                <p class="mt-2 text-sm text-gray-600">
+                    Manage ad creatives, copy variations, and A/B tests
+                </p>
+            </div>
+            <div class="mt-4 flex md:mt-0 md:ml-4">
+                <button @click="showUploadModal = true" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">
+                    <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    Add Creative
+                </button>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white shadow rounded-lg p-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                    <select x-model="filters.type" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                        <option value="">All Types</option>
+                        <option value="image">Image</option>
+                        <option value="video">Video</option>
+                        <option value="carousel">Carousel</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                    <select x-model="filters.status" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                        <option value="">All Status</option>
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                        <option value="archived">Archived</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Sort By</label>
+                    <select x-model="filters.sortBy" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                        <option value="created">Created Date</option>
+                        <option value="performance">Performance</option>
+                        <option value="name">Name</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Creative Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <template x-for="creative in filteredCreatives" :key="creative.id">
+                <div class="bg-white shadow rounded-lg overflow-hidden hover:shadow-lg transition-shadow">
+                    <!-- Creative Preview -->
+                    <div class="aspect-w-16 aspect-h-9 bg-gray-200">
+                        <template x-if="creative.type === 'image'">
+                            <img :src="creative.thumbnail || '/static/img/placeholder.jpg'" :alt="creative.name" class="object-cover w-full h-48" style="image-rendering: -webkit-optimize-contrast; image-rendering: crisp-edges;">
+                        </template>
+                        <template x-if="creative.type === 'video'">
+                            <div class="flex items-center justify-center h-48 bg-gray-800">
+                                <svg class="h-16 w-16 text-white opacity-75" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" />
+                                </svg>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Creative Info -->
+                    <div class="p-4">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900 truncate" x-text="creative.name"></h3>
+                                <p class="text-sm text-gray-500 mt-1" x-text="creative.type"></p>
+                            </div>
+                            <span class="ml-2 flex-shrink-0 inline-block px-2 py-0.5 text-xs font-medium rounded-full"
+                                  :class="{
+                                      'bg-green-100 text-green-800': creative.status === 'active',
+                                      'bg-yellow-100 text-yellow-800': creative.status === 'paused',
+                                      'bg-gray-100 text-gray-800': creative.status === 'archived'
+                                  }"
+                                  x-text="creative.status"></span>
+                        </div>
+
+                        <!-- Copy Preview -->
+                        <div class="mt-3">
+                            <p class="text-xs text-gray-600 line-clamp-2" x-text="creative.copy"></p>
+                        </div>
+
+                        <!-- Performance Metrics -->
+                        <div class="mt-4 grid grid-cols-3 gap-2 text-center">
+                            <div>
+                                <div class="text-xs text-gray-500">CTR</div>
+                                <div class="text-sm font-semibold text-gray-900" x-text="creative.ctr + '%'"></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500">Clicks</div>
+                                <div class="text-sm font-semibold text-gray-900" x-text="formatNumber(creative.clicks)"></div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-gray-500">Conv.</div>
+                                <div class="text-sm font-semibold text-gray-900" x-text="creative.conversions"></div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="mt-4 flex flex-col space-y-2">
+                            <div class="flex space-x-2">
+                                <button @click="editCreative(creative)" class="flex-1 bg-blue-50 text-blue-700 px-3 py-2 rounded-md text-sm font-medium hover:bg-blue-100">
+                                    Edit
+                                </button>
+                                <button @click="duplicateCreative(creative)" class="flex-1 bg-gray-50 text-gray-700 px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-100">
+                                    Duplicate
+                                </button>
+                            </div>
+                            <button @click="downloadImage(creative)" class="w-full bg-green-50 text-green-700 px-3 py-2 rounded-md text-sm font-medium hover:bg-green-100 flex items-center justify-center">
+                                <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                </svg>
+                                Download Image
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Empty State -->
+        <div x-show="filteredCreatives.length === 0" class="bg-white shadow rounded-lg p-12 text-center">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">No creatives found</h3>
+            <p class="mt-1 text-sm text-gray-500">Get started by adding your first creative.</p>
+            <div class="mt-6">
+                <button @click="showUploadModal = true" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+                    <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    Add Creative
+                </button>
+            </div>
+        </div>
+
+        <!-- Upload Modal -->
+        <div x-show="showUploadModal" x-cloak class="fixed z-10 inset-0 overflow-y-auto">
+            <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" @click="showUploadModal = false"></div>
+                <div class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                    <form @submit.prevent="addCreative()">
+                        <div class="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                            <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Add New Creative</h3>
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Name</label>
+                                    <input type="text" x-model="newCreative.name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Type</label>
+                                    <select x-model="newCreative.type" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                                        <option value="image">Image</option>
+                                        <option value="video">Video</option>
+                                        <option value="carousel">Carousel</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">
+                                        Headline
+                                        <span :class="headlineValid ? 'text-gray-500' : 'text-red-600'" class="text-xs font-normal">
+                                            (<span x-text="headlineCharCount"></span>/40 characters)
+                                        </span>
+                                    </label>
+                                    <input type="text" x-model="newCreative.headline" required maxlength="40"
+                                           :class="headlineValid ? 'border-gray-300' : 'border-red-500'"
+                                           class="mt-1 block w-full rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                                    <p class="mt-1 text-xs text-gray-500">Max 40 characters - appears in large text</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">
+                                        Primary Text (Description)
+                                        <span :class="copyValid ? 'text-gray-500' : 'text-red-600'" class="text-xs font-normal">
+                                            (<span x-text="copyCharCount"></span>/125 characters)
+                                        </span>
+                                    </label>
+                                    <textarea x-model="newCreative.copy" rows="3" required maxlength="125"
+                                              :class="copyValid ? 'border-gray-300' : 'border-red-500'"
+                                              class="mt-1 block w-full rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"></textarea>
+                                    <p class="mt-1 text-xs text-gray-500">Max 125 characters - main ad copy</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700">Call to Action</label>
+                                    <select x-model="newCreative.cta" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                                        <option value="LEARN_MORE">Learn More</option>
+                                        <option value="SHOP_NOW">Shop Now</option>
+                                        <option value="SIGN_UP">Sign Up</option>
+                                        <option value="DOWNLOAD">Download</option>
+                                        <option value="BOOK_NOW">Book Now</option>
+                                        <option value="CONTACT_US">Contact Us</option>
+                                        <option value="GET_QUOTE">Get Quote</option>
+                                        <option value="APPLY_NOW">Apply Now</option>
+                                        <option value="SUBSCRIBE">Subscribe</option>
+                                        <option value="WATCH_MORE">Watch More</option>
+                                    </select>
+                                </div>
+
+                                <!-- Facebook Specifications Info -->
+                                <div class="bg-blue-50 border border-blue-200 rounded-md p-3" x-show="specifications">
+                                    <div class="text-xs">
+                                        <p class="font-semibold text-blue-900 mb-2">📐 Facebook Ad Specifications:</p>
+                                        <template x-if="newCreative.type === 'image'">
+                                            <div class="space-y-1 text-blue-800">
+                                                <p>• Image: 1200x628px recommended (1.91:1 ratio)</p>
+                                                <p>• Max file size: 30MB (JPG, PNG)</p>
+                                                <p>• Text in image: Keep minimal</p>
+                                            </div>
+                                        </template>
+                                        <template x-if="newCreative.type === 'video'">
+                                            <div class="space-y-1 text-blue-800">
+                                                <p>• Video: 1080x1080px (1:1) or 1920x1080px (16:9)</p>
+                                                <p>• Length: 15 seconds recommended</p>
+                                                <p>• Max file size: 4GB (MP4, MOV)</p>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                            <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none sm:ml-3 sm:w-auto sm:text-sm">
+                                Add Creative
+                            </button>
+                            <button type="button" @click="showUploadModal = false" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function creatives() {
+    return {
+        creatives: [],
+        filters: {
+            type: '',
+            status: '',
+            sortBy: 'created'
+        },
+        showUploadModal: false,
+        specifications: null,
+        newCreative: {
+            name: '',
+            type: 'image',
+            copy: '',
+            headline: '',
+            cta: 'LEARN_MORE'
+        },
+
+        async init() {
+            // Load real creatives from Facebook API
+            await this.loadCreatives();
+            await this.loadSpecifications();
+        },
+
+        async loadCreatives() {
+            try {
+                const response = await fetch('/api/creatives');
+                const data = await response.json();
+                this.creatives = data.creatives.map(c => ({
+                    ...c,
+                    copy: c.description || '',
+                    thumbnail: c.thumbnail_url,
+                    status: c.status.toLowerCase()
+                }));
+                console.log(`✅ Loaded ${this.creatives.length} real Facebook creatives`);
+            } catch (error) {
+                console.error('Failed to load creatives:', error);
+                notify('Failed to load creatives', 'error');
+            }
+        },
+
+        async loadSpecifications() {
+            try {
+                const response = await fetch('/api/creatives/specifications');
+                this.specifications = await response.json();
+                console.log('✅ Loaded Facebook ad specifications');
+            } catch (error) {
+                console.error('Failed to load specifications:', error);
+            }
+        },
+
+        get headlineCharCount() {
+            return this.newCreative.headline?.length || 0;
+        },
+
+        get copyCharCount() {
+            return this.newCreative.copy?.length || 0;
+        },
+
+        get headlineValid() {
+            return this.headlineCharCount <= 40;
+        },
+
+        get copyValid() {
+            return this.copyCharCount <= 125;
+        },
+
+        get filteredCreatives() {
+            return this.creatives.filter(creative => {
+                if (this.filters.type && creative.type !== this.filters.type) return false;
+                if (this.filters.status && creative.status !== this.filters.status) return false;
+                return true;
+            }).sort((a, b) => {
+                if (this.filters.sortBy === 'performance') {
+                    return b.ctr - a.ctr;
+                } else if (this.filters.sortBy === 'name') {
+                    return a.name.localeCompare(b.name);
+                }
+                return 0;
+            });
+        },
+
+        async addCreative() {
+            // Validate character limits
+            if (!this.headlineValid) {
+                notify('Headline must be 40 characters or less', 'error');
+                return;
+            }
+            if (!this.copyValid) {
+                notify('Description must be 125 characters or less', 'error');
+                return;
+            }
+
+            try {
+                // Note: This requires image/video upload functionality
+                // For now, show specifications
+                notify('Creative upload requires image/video upload implementation', 'info');
+                console.log('New creative data:', this.newCreative);
+                console.log('Specifications:', this.specifications);
+
+                // Reset form
+                this.showUploadModal = false;
+                this.newCreative = {
+                    name: '',
+                    type: 'image',
+                    copy: '',
+                    headline: '',
+                    cta: 'LEARN_MORE'
+                };
+            } catch (error) {
+                console.error('Failed to create creative:', error);
+                notify('Failed to create creative', 'error');
+            }
+        },
+
+        editCreative(creative) {
+            notify('Edit creative feature coming soon');
+        },
+
+        duplicateCreative(creative) {
+            const duplicate = {
+                ...creative,
+                id: Date.now().toString(),
+                name: creative.name + ' (Copy)',
+                status: 'paused'
+            };
+
+            this.creatives.push(duplicate);
+            notify('Creative duplicated successfully');
+        },
+
+        async downloadImage(creative) {
+            try {
+                console.log('Downloading image for creative:', creative.id);
+
+                // Download from Facebook API
+                const response = await fetch(`/api/creatives/${creative.id}/download`);
+
+                if (!response.ok) {
+                    throw new Error('Failed to download image');
+                }
+
+                // Create blob and download
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `creative_${creative.id}.jpg`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                notify('Image downloaded successfully!', 'success');
+            } catch (err) {
+                console.error('Failed to download image:', err);
+                notify('Failed to download image', 'error');
+            }
+        },
+
+        formatNumber(value) {
+            return new Intl.NumberFormat('en-US').format(value);
+        }
+    };
+}
+</script>
+{% endblock %}

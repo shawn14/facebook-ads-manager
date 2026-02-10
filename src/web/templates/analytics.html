@@ -1,0 +1,365 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Facebook Ads Manager{% endblock %}
+
+{% block content %}
+<div x-data="analytics()" x-init="init()" class="py-6">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <!-- Header -->
+        <div class="md:flex md:items-center md:justify-between mb-6">
+            <div class="flex-1 min-w-0">
+                <h1 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
+                    Analytics
+                </h1>
+            </div>
+            <div class="mt-4 flex md:mt-0 md:ml-4">
+                <select x-model="timeRange" @change="loadData()" class="rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                    <option value="7">Last 7 days</option>
+                    <option value="14">Last 14 days</option>
+                    <option value="30">Last 30 days</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Campaign Selector -->
+        <div class="bg-white shadow rounded-lg p-4 mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Select Campaign</label>
+            <select x-model="selectedCampaign" @change="loadCampaignAnalytics()" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+                <option value="">Account Overview</option>
+                <template x-for="campaign in campaigns" :key="campaign.campaign_id">
+                    <option :value="campaign.campaign_id" x-text="campaign.campaign_name"></option>
+                </template>
+            </select>
+        </div>
+
+        <!-- Metrics Grid -->
+        <div x-show="selectedCampaign === ''" class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Total Campaigns</dt>
+                                <dd class="text-3xl font-semibold text-gray-900" x-text="summary.campaign_count">0</dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Total Spend</dt>
+                                <dd class="text-3xl font-semibold text-gray-900" x-text="formatCurrency(summary.total_spend)">$0</dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Total Conversions</dt>
+                                <dd class="text-3xl font-semibold text-gray-900" x-text="summary.total_conversions">0</dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Avg ROAS</dt>
+                                <dd class="text-3xl font-semibold" :class="summary.average_roas >= 2 ? 'text-green-600' : 'text-red-600'" x-text="summary.average_roas.toFixed(2) + 'x'">0x</dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Campaign Details -->
+        <div x-show="selectedCampaign !== ''" class="bg-white shadow rounded-lg p-6 mb-8">
+            <h3 class="text-lg font-medium text-gray-900 mb-4">Campaign Performance</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Impressions</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="formatNumber(campaignData.impressions)">0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Clicks</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="formatNumber(campaignData.clicks)">0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">CTR</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="campaignData.ctr.toFixed(2) + '%'">0%</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">CPC</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="formatCurrency(campaignData.cpc)">$0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Spend</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="formatCurrency(campaignData.spend)">$0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">Conversions</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="campaignData.conversions">0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">CPA</dt>
+                    <dd class="mt-1 text-2xl font-semibold text-gray-900" x-text="campaignData.conversions > 0 ? formatCurrency(campaignData.cost_per_conversion) : 'N/A'">$0</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500">ROAS</dt>
+                    <dd class="mt-1 text-2xl font-semibold" :class="campaignData.roas >= 2 ? 'text-green-600' : 'text-red-600'" x-text="campaignData.roas.toFixed(2) + 'x'">0x</dd>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Anomalies -->
+        <div x-show="selectedCampaign !== '' && anomalies.length > 0" class="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-yellow-800">Performance Anomalies Detected</h3>
+                    <div class="mt-2 text-sm text-yellow-700">
+                        <ul class="list-disc list-inside space-y-1">
+                            <template x-for="anomaly in anomalies" :key="anomaly.type">
+                                <li x-text="anomaly.message"></li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white shadow rounded-lg p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Performance Metrics</h3>
+                <canvas id="metricsChart" style="max-height: 300px;"></canvas>
+            </div>
+
+            <div class="bg-white shadow rounded-lg p-6">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Conversion Funnel</h3>
+                <canvas id="funnelChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function analytics() {
+    return {
+        timeRange: 7,
+        selectedCampaign: '',
+        campaigns: [],
+        summary: {
+            total_spend: 0,
+            total_impressions: 0,
+            total_clicks: 0,
+            total_conversions: 0,
+            average_roas: 0,
+            campaign_count: 0
+        },
+        campaignData: {
+            impressions: 0,
+            clicks: 0,
+            ctr: 0,
+            cpc: 0,
+            spend: 0,
+            conversions: 0,
+            cost_per_conversion: 0,
+            roas: 0
+        },
+        anomalies: [],
+        metricsChart: null,
+        funnelChart: null,
+
+        async init() {
+            await this.loadData();
+        },
+
+        async loadData() {
+            try {
+                const response = await fetch(`/api/analytics/overview?days=${this.timeRange}`);
+                const data = await response.json();
+
+                this.summary = data.summary;
+                this.campaigns = data.campaigns;
+
+                if (this.selectedCampaign === '') {
+                    this.updateOverviewCharts();
+                }
+            } catch (error) {
+                console.error('Failed to load analytics:', error);
+                notify('Failed to load analytics', 'error');
+            }
+        },
+
+        async loadCampaignAnalytics() {
+            if (!this.selectedCampaign) {
+                await this.loadData();
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/analytics/campaign/${this.selectedCampaign}?days=${this.timeRange}`);
+                this.campaignData = await response.json();
+
+                // Load anomalies
+                const anomalyResponse = await fetch(`/api/analytics/anomalies/${this.selectedCampaign}`);
+                const anomalyData = await anomalyResponse.json();
+                this.anomalies = anomalyData.anomalies || [];
+
+                this.updateCampaignCharts();
+            } catch (error) {
+                console.error('Failed to load campaign analytics:', error);
+                notify('Failed to load campaign analytics', 'error');
+            }
+        },
+
+        updateOverviewCharts() {
+            // Metrics comparison chart
+            const ctx = document.getElementById('metricsChart').getContext('2d');
+            if (this.metricsChart) {
+                this.metricsChart.destroy();
+            }
+
+            const topCampaigns = this.campaigns.slice(0, 5);
+
+            this.metricsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: topCampaigns.map(c => c.campaign_name.substring(0, 15)),
+                    datasets: [{
+                        label: 'Spend',
+                        data: topCampaigns.map(c => c.spend),
+                        backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                        yAxisID: 'y'
+                    }, {
+                        label: 'ROAS',
+                        data: topCampaigns.map(c => c.roas),
+                        backgroundColor: 'rgba(34, 197, 94, 0.5)',
+                        yAxisID: 'y1'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Spend ($)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'ROAS'
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            });
+        },
+
+        updateCampaignCharts() {
+            // Metrics chart
+            const ctx = document.getElementById('metricsChart').getContext('2d');
+            if (this.metricsChart) {
+                this.metricsChart.destroy();
+            }
+
+            this.metricsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Impressions', 'Clicks', 'Conversions'],
+                    datasets: [{
+                        label: 'Count',
+                        data: [this.campaignData.impressions, this.campaignData.clicks, this.campaignData.conversions],
+                        borderColor: 'rgb(59, 130, 246)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false
+                }
+            });
+
+            // Funnel chart
+            const funnelCtx = document.getElementById('funnelChart').getContext('2d');
+            if (this.funnelChart) {
+                this.funnelChart.destroy();
+            }
+
+            this.funnelChart = new Chart(funnelCtx, {
+                type: 'bar',
+                data: {
+                    labels: ['Impressions', 'Clicks', 'Conversions'],
+                    datasets: [{
+                        label: 'Funnel',
+                        data: [
+                            this.campaignData.impressions,
+                            this.campaignData.clicks,
+                            this.campaignData.conversions
+                        ],
+                        backgroundColor: [
+                            'rgba(59, 130, 246, 0.8)',
+                            'rgba(59, 130, 246, 0.6)',
+                            'rgba(34, 197, 94, 0.8)'
+                        ]
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        },
+
+        formatCurrency(value) {
+            return new Intl.NumberFormat('en-US', {
+                style: 'currency',
+                currency: 'USD'
+            }).format(value);
+        },
+
+        formatNumber(value) {
+            return new Intl.NumberFormat('en-US').format(value);
+        }
+    };
+}
+</script>
+{% endblock %}
