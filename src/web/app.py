@@ -1897,7 +1897,7 @@ async def track_conversion(
     Useful for tracking purchases, leads, registrations, etc.
     """
     try:
-        client = get_client()
+        client = get_clients()[0]
         config = client.config
 
         # Check if pixel_id is configured
@@ -1958,7 +1958,7 @@ async def track_purchase(
 ):
     """Track a purchase/transaction event."""
     try:
-        client = get_client()
+        client = get_clients()[0]
         config = client.config
 
         pixel_id = config.get('facebook', {}).get('pixel_id')
@@ -2007,7 +2007,7 @@ async def track_lead(
 ):
     """Track a lead generation event."""
     try:
-        client = get_client()
+        client = get_clients()[0]
         config = client.config
 
         pixel_id = config.get('facebook', {}).get('pixel_id')
@@ -2049,7 +2049,7 @@ async def track_registration(
 ):
     """Track a user registration/signup event."""
     try:
-        client = get_client()
+        client = get_clients()[0]
         config = client.config
 
         pixel_id = config.get('facebook', {}).get('pixel_id')
@@ -2080,6 +2080,133 @@ async def track_registration(
         raise
     except Exception as e:
         logger.error(f"Registration tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/conversions/trial")
+async def track_trial_start(
+    user_email: str = Form(...),
+    content_name: Optional[str] = Form("Stock Alarm Pro"),
+    user_first_name: Optional[str] = Form(None),
+    user_last_name: Optional[str] = Form(None),
+    user_ip: Optional[str] = Form(None),
+    user_agent: Optional[str] = Form(None),
+    fbp: Optional[str] = Form(None),
+    fbc: Optional[str] = Form(None),
+    test_event_code: Optional[str] = Form(None)
+):
+    """Track a free trial start event (StartTrial).
+
+    Call this from your subscription backend the moment a user
+    starts a free trial. This is the primary optimization event
+    for Phase 1-2 of the Hormozi scaling framework.
+
+    fbp: _fbp cookie value (Facebook browser ID)
+    fbc: _fbc cookie value (Facebook click ID — pass from URL ?fbc= param)
+    """
+    try:
+        client = get_clients()[0]
+        config = client.config
+
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(status_code=400, detail="Pixel ID not configured")
+
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        result = tracker.track_event(
+            event_name="StartTrial",
+            user_email=user_email,
+            user_first_name=user_first_name,
+            user_last_name=user_last_name,
+            user_ip=user_ip,
+            user_agent=user_agent,
+            fbp=fbp,
+            fbc=fbc,
+            content_name=content_name,
+            test_event_code=test_event_code
+        )
+
+        if result['success']:
+            return {"success": True, "event_name": "StartTrial", "email": user_email}
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Trial tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/conversions/subscribe")
+async def track_subscription(
+    user_email: str = Form(...),
+    value: float = Form(...),
+    currency: str = Form("USD"),
+    content_name: Optional[str] = Form("Stock Alarm Pro"),
+    user_first_name: Optional[str] = Form(None),
+    user_last_name: Optional[str] = Form(None),
+    user_ip: Optional[str] = Form(None),
+    user_agent: Optional[str] = Form(None),
+    fbp: Optional[str] = Form(None),
+    fbc: Optional[str] = Form(None),
+    test_event_code: Optional[str] = Form(None)
+):
+    """Track a paid subscription event (Subscribe).
+
+    Call this from your subscription backend when a trial converts
+    to a paid subscription. Used for Phase 3+ optimization once
+    you reach 50+ weekly subscribe events per ad set.
+
+    value: subscription price (e.g. 9.99 for monthly, 99.99 for annual)
+    fbp: _fbp cookie value
+    fbc: _fbc cookie value
+    """
+    try:
+        client = get_clients()[0]
+        config = client.config
+
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(status_code=400, detail="Pixel ID not configured")
+
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        result = tracker.track_subscription(
+            value=value,
+            currency=currency,
+            user_email=user_email,
+            content_name=content_name,
+            user_first_name=user_first_name,
+            user_last_name=user_last_name,
+            user_ip=user_ip,
+            user_agent=user_agent,
+            fbp=fbp,
+            fbc=fbc,
+            test_event_code=test_event_code
+        )
+
+        if result['success']:
+            return {
+                "success": True,
+                "event_name": "Subscribe",
+                "value": value,
+                "currency": currency
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Subscribe tracking error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

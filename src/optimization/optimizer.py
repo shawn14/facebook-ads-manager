@@ -1,5 +1,6 @@
 """Budget optimization module."""
 
+from datetime import datetime
 from typing import Dict, List, Optional
 from loguru import logger
 
@@ -256,6 +257,287 @@ class BudgetOptimizer:
                 return int(action.get('value', 0))
 
         return 0
+
+    # ── Hormozi Weekly Review System (Phase 4.4 + 4.5) ───────────────────────
+
+    def weekly_creative_review(
+        self,
+        campaign_id: str,
+        target_cpt_usd: float,
+        days: int = 7,
+        dry_run: bool = True,
+    ) -> Dict:
+        """Phase 6 weekly review: apply kill rules, classify, output decisions.
+
+        Runs every Monday. Takes 60 minutes operationally:
+          Step 1 (15 min) — Pull numbers via AnalyticsReporter.get_creative_performance()
+          Step 2 (15 min) — Classify: winner / gray_zone / kill / fatigued
+          Step 3 (15 min) — Make decisions: pause kills, flag winners for CBO
+          Step 4 (15 min) — Output 70/20/10 creative brief for next week
+
+        Kill rules applied:
+          - Hook Rate < 25%: kill (scroll failure)
+          - Spend ≥ 3× target_cpt with 0 conversions: kill (structural)
+          - CPT > 2× target by day 10: kill (performance)
+          - Frequency > 3.0 AND CTR < 0.5%: fatigued (refresh, not kill)
+          - CPT ≤ target AND Hook Rate ≥ 30%: winner (promote to CBO)
+
+        Budget rule: Never increase by more than 30% at once (larger jumps
+        restart the Meta learning phase).
+
+        Args:
+            campaign_id: The ABO testing campaign
+            target_cpt_usd: Your target cost-per-trial in USD
+            days: Lookback window (7 for weekly review)
+            dry_run: Preview decisions without pausing ads
+
+        Returns:
+            Full review dict with kill/keep/scale/brief lists and actions taken
+        """
+        from src.analytics.reporter import AnalyticsReporter
+
+        reporter = AnalyticsReporter(self.client)
+        perf = reporter.get_creative_performance(
+            campaign_id=campaign_id,
+            days=days,
+            target_cpt_usd=target_cpt_usd,
+        )
+
+        winners = perf['winners']
+        kills = perf['kills']
+        gray_zone = perf['gray_zone']
+        fatigued = perf['fatigued']
+        all_ads = perf['ads']
+
+        actions_taken = []
+
+        # Execute kills
+        for ad in kills:
+            if not dry_run:
+                try:
+                    self.client.pause_adset(ad['adset_id'])
+                    actions_taken.append({
+                        'action': 'paused',
+                        'adset_id': ad['adset_id'],
+                        'reason': f"Kill rule: CPT ${ad['cpt']} | Hook {ad['hook_rate_pct']}%",
+                    })
+                    logger.warning(f"Killed ad set {ad['adset_id']} ({ad['angle_name']} H{ad['hook_id']})")
+                except Exception as e:
+                    logger.error(f"Failed to pause ad set {ad['adset_id']}: {e}")
+            else:
+                actions_taken.append({
+                    'action': 'would_pause',
+                    'adset_id': ad['adset_id'],
+                    'reason': f"Kill rule: CPT ${ad['cpt']} | Hook {ad['hook_rate_pct']}%",
+                })
+
+        # Flag winners for CBO (don't touch budget on testing campaign — move to CBO instead)
+        winner_creative_ids = [a.get('creative_id') for a in winners if a.get('creative_id')]
+
+        # Generate next week's brief
+        brief = self.generate_creative_brief(winners, fatigued)
+
+        mode = "[DRY RUN]" if dry_run else "[APPLIED]"
+        logger.info(
+            f"{mode} Weekly review: {len(winners)} winners, {len(kills)} killed, "
+            f"{len(gray_zone)} gray zone, {len(fatigued)} fatigued."
+        )
+
+        return {
+            'campaign_id': campaign_id,
+            'review_date': datetime.now().isoformat() if True else None,
+            'dry_run': dry_run,
+            'target_cpt_usd': target_cpt_usd,
+            'summary': perf['summary'],
+            'winners': winners,
+            'kills': kills,
+            'gray_zone': gray_zone,
+            'fatigued': fatigued,
+            'winner_creative_ids': winner_creative_ids,
+            'actions_taken': actions_taken,
+            'next_week_brief': brief,
+            'next_steps': [
+                f"Move {len(winners)} winner creative(s) to CBO scaling campaign",
+                f"Pause {len(kills)} ad sets" if dry_run else f"Paused {len(kills)} ad sets",
+                f"Give {len(gray_zone)} gray-zone ads 3 more days before re-evaluating",
+                f"Queue {len(fatigued)} fatigued creatives for refresh (minor variations)",
+                "Review the next_week_brief and brief your creative team",
+            ],
+        }
+
+    def generate_creative_brief(
+        self,
+        winners: List[Dict],
+        fatigued: Optional[List[Dict]] = None,
+    ) -> Dict:
+        """Phase 4.5 — Generate the 70/20/10 creative production brief.
+
+        Takes this week's winners and outputs structured briefs for next week:
+          70% — Minor variations of top 2 winners (safe scaling)
+          20% — Substantial variations (new hook, different creator)
+          10% — New angle discovery (3 new hooks on an untested angle)
+
+        Minor variations (70% bucket):
+          - Different presenter / creator (swap the face)
+          - Color filter / grade change
+          - Horizontal flip of video
+          - Swap b-roll cutaways
+          - Slight copy tweak (same argument, one different word in hook)
+          Note: Andromeda penalizes cosmetic-only changes — need ≥2 elements different.
+
+        Substantial variations (20% bucket):
+          - New hook bolted onto the winning angle
+          - Different creator presenting the SAME argument
+          - New setting/environment for same concept
+          - Different edit style (talking head → narrated b-roll)
+
+        New discovery (10% bucket):
+          - 1 untested angle
+          - 3 hooks on that angle
+
+        Args:
+            winners: Winner list from weekly_creative_review()
+            fatigued: Fatigued list (needs creative refresh, not new concepts)
+
+        Returns:
+            Structured brief with 70/20/10 buckets
+        """
+        fatigued = fatigued or []
+        top_winners = sorted(winners, key=lambda x: x.get('cpt') or 999)[:2]
+
+        # 70% bucket — minor variations of top 2
+        bucket_70 = []
+        for winner in top_winners:
+            angle_name = winner.get('angle_name', 'Unknown')
+            hook_format = winner.get('hook_format', 'Unknown')
+            hook_opening = winner.get('hook_opening', '')
+            bucket_70.append({
+                'source_ad_id': winner['ad_id'],
+                'source_angle': angle_name,
+                'source_hook': hook_opening[:80],
+                'cpt': winner.get('cpt'),
+                'hook_rate_pct': winner.get('hook_rate_pct'),
+                'variations_to_produce': [
+                    {
+                        'variation': 'Different presenter/creator',
+                        'instruction': f"Same script and angle as '{angle_name}' but swap the on-camera talent",
+                        'andromeda_signal_change': 'face/talent',
+                    },
+                    {
+                        'variation': 'Color grade + b-roll swap',
+                        'instruction': f"Re-edit the '{hook_format}' version with different b-roll cutaways and warm color grade",
+                        'andromeda_signal_change': 'visual_style + b-roll',
+                    },
+                    {
+                        'variation': 'Horizontal flip + copy micro-tweak',
+                        'instruction': f"Mirror-flip the video, change first word of hook: '{hook_opening[:40]}...'",
+                        'andromeda_signal_change': 'orientation + copy',
+                    },
+                ],
+            })
+
+        # 20% bucket — substantial variations of winners
+        bucket_20 = []
+        for winner in top_winners:
+            angle_name = winner.get('angle_name', 'Unknown')
+            hook_opening = winner.get('hook_opening', '')
+            bucket_20.append({
+                'source_ad_id': winner['ad_id'],
+                'source_angle': angle_name,
+                'variations_to_produce': [
+                    {
+                        'variation': 'New hook, same angle body',
+                        'instruction': (
+                            f"Keep the '{angle_name}' argument and CTA unchanged. "
+                            f"Write a completely different opening hook (current: '{hook_opening[:50]}...'). "
+                            f"Try opposite format — if current is talking head, try silent text overlay."
+                        ),
+                        'andromeda_signal_change': 'hook + format',
+                    },
+                    {
+                        'variation': 'Different creator, same script',
+                        'instruction': (
+                            f"Different creator/presenter delivers the exact same '{angle_name}' "
+                            f"script word-for-word. Different face = different audience signal to Andromeda."
+                        ),
+                        'andromeda_signal_change': 'talent',
+                    },
+                ],
+            })
+
+        # Add fatigued creatives to 20% bucket — they need refresh, not replacement
+        for fatigued_ad in fatigued[:2]:
+            bucket_20.append({
+                'source_ad_id': fatigued_ad['ad_id'],
+                'source_angle': fatigued_ad.get('angle_name', 'Unknown'),
+                'type': 'fatigue_refresh',
+                'variations_to_produce': [
+                    {
+                        'variation': 'Fatigue refresh — new hook only',
+                        'instruction': (
+                            f"The '{fatigued_ad.get('angle_name')}' angle worked (frequency "
+                            f"{fatigued_ad.get('frequency')} shows saturation). "
+                            f"Keep the body/CTA, write 2 completely new hooks for it."
+                        ),
+                        'andromeda_signal_change': 'hook',
+                    },
+                ],
+            })
+
+        # 10% bucket — new angle discovery
+        from src.creative.hormozi_framework import StockAlarmAngleMatrix, ANGLES
+        matrix = StockAlarmAngleMatrix()
+        used_angles = {w.get('angle_id') for w in winners + fatigued if w.get('angle_id')}
+        untested_angles = [a for a in ANGLES if a['id'] not in used_angles]
+
+        bucket_10 = []
+        if untested_angles:
+            new_angle = untested_angles[0]
+            bucket_10.append({
+                'angle_to_test': new_angle['name'],
+                'angle_argument': new_angle['core_argument'],
+                'hooks_to_produce': [
+                    f"Hook A [talking_head]: Direct delivery of '{new_angle['name']}' argument",
+                    f"Hook B [text_overlay]: Bold text treatment of the core claim",
+                    f"Hook C [ugc]: Authentic creator story from '{new_angle['name']}' angle",
+                ],
+                'instruction': (
+                    f"Produce 3 hooks on the '{new_angle['name']}' angle. "
+                    f"Core argument: {new_angle['core_argument'][:100]}..."
+                ),
+            })
+        else:
+            bucket_10.append({
+                'instruction': (
+                    "All 6 angles have been tested. For 10% bucket this week: "
+                    "test a new creative format (carousel or 15-second cut-down) "
+                    "using your best-performing angle."
+                ),
+            })
+
+        total_new_ads = (
+            sum(len(b['variations_to_produce']) for b in bucket_70) +
+            sum(len(b['variations_to_produce']) for b in bucket_20) +
+            3  # 10% bucket always produces ~3
+        )
+
+        return {
+            'week': datetime.now().strftime('%Y-W%W'),
+            'total_new_ads_to_produce': total_new_ads,
+            'budget_allocation': {
+                '70_pct': 'Proven winners — minor variations for safe scaling',
+                '20_pct': 'Substantial variations + fatigue refreshes',
+                '10_pct': 'New angle discovery — expect most to fail',
+            },
+            'bucket_70_minor_variations': bucket_70,
+            'bucket_20_substantial_variations': bucket_20,
+            'bucket_10_new_discovery': bucket_10,
+            'production_reminder': (
+                "Andromeda requires genuine creative diversity — each variation must differ "
+                "on ≥2 elements (talent, hook, format, visual style). Pure cosmetic re-skins "
+                "are treated as the same creative and compete for the same auction slot."
+            ),
+        }
 
     def rebalance_portfolio(self, total_budget: float, dry_run: bool = True) -> List[Dict]:
         """Rebalance budget across all campaigns to maximize ROI.

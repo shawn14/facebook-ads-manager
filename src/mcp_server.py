@@ -388,5 +388,243 @@ def rebalance_portfolio(total_budget_usd: float, dry_run: bool = True) -> str:
     return prefix + json.dumps(result, indent=2, default=str)
 
 
+# ── Hormozi Framework Tools ───────────────────────────────────────────────────
+
+@mcp.tool()
+def get_angle_matrix() -> str:
+    """Get the full 6-angle × 5-hook = 30 creative brief matrix for Stock Alarm.
+
+    Returns all 30 creative briefs with angle arguments, hook formats,
+    opening lines, body points, and pre-formatted ad set names for Meta
+    Ads Manager. Use this to brief your creative team before filming.
+    """
+    from src.creative.hormozi_framework import StockAlarmAngleMatrix
+    matrix = StockAlarmAngleMatrix()
+    return json.dumps(matrix.to_dict(), indent=2)
+
+
+@mcp.tool()
+def get_angle_matrix_summary() -> str:
+    """Print a human-readable summary of the 30-creative matrix.
+
+    Shows each angle's core argument and the 5 hook formats under it.
+    Easier to read than the full JSON — use for quick orientation.
+    """
+    from src.creative.hormozi_framework import StockAlarmAngleMatrix
+    matrix = StockAlarmAngleMatrix()
+    return matrix.summary()
+
+
+@mcp.tool()
+def get_gso_offer() -> str:
+    """Get the Grand Slam Offer stack and Value Equation for Stock Alarm.
+
+    Returns the full offer construction: offer components, Value Equation
+    analysis, compliance notes for Meta financial ad policy, headline
+    variants (40-char limit), and primary text variants (125-char limit).
+    """
+    from src.creative.hormozi_framework import GSOBuilder
+    builder = GSOBuilder()
+    return json.dumps({
+        'summary': builder.summary(),
+        'offer_stack': builder.get_offer_stack(),
+        'headline_variants': builder.get_headline_variants(),
+        'primary_text_variants': builder.get_primary_text_variants(),
+        'cta_options': builder.get_cta_options(),
+    }, indent=2)
+
+
+@mcp.tool()
+def create_testing_campaign(
+    name: str,
+    daily_budget_per_adset_usd: float,
+    optimization_goal: str = "APP_INSTALLS",
+    app_id: str = None,
+    app_store_url: str = None,
+    age_min: int = 25,
+    age_max: int = 54,
+) -> str:
+    """Create a 30-ad-set ABO testing campaign (Phase 3 — Hormozi framework).
+
+    Creates 1 campaign + 30 ad sets (one per creative brief) in parallel.
+    All ad sets start PAUSED. Saves angle/hook mapping for performance tracking.
+
+    After running this:
+    1. Upload your 30 creative videos/images to Facebook
+    2. Call add_creatives_to_testing_campaign() to wire them
+    3. Run get_launch_checklist() before going live
+
+    daily_budget_per_adset_usd: minimum = 5 × your target CPT
+      (e.g. target CPT=$20 → use $100/day per ad set)
+    optimization_goal: APP_INSTALLS (Phase 0-1) or OFFSITE_CONVERSIONS (Phase 2+)
+    app_id / app_store_url: required for APP_INSTALLS campaigns
+    """
+    mgr, _, _ = _get_managers()
+    promoted_object = None
+    if app_id and app_store_url:
+        promoted_object = {
+            'application_id': app_id,
+            'object_store_url': app_store_url,
+        }
+    result = mgr.create_hormozi_testing_campaign(
+        name=name,
+        daily_budget_per_adset_usd=daily_budget_per_adset_usd,
+        optimization_goal=optimization_goal,
+        promoted_object=promoted_object,
+        age_min=age_min,
+        age_max=age_max,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def add_creatives_to_campaign(
+    campaign_id: str,
+    creative_assignments_json: str,
+) -> str:
+    """Wire creative IDs to their ad sets and create the actual ads.
+
+    Call after uploading your 30 creatives to Facebook.
+
+    creative_assignments_json: JSON array of objects:
+      [{"adset_id": "123", "creative_id": "456"}, ...]
+
+    Get adset_ids from the result of create_testing_campaign().
+    Get creative_ids from create_image_creative() or list_creatives().
+    """
+    mgr, _, _ = _get_managers()
+    assignments = json.loads(creative_assignments_json)
+    result = mgr.add_creatives_to_testing_campaign(campaign_id, assignments)
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def create_scaling_campaign(
+    name: str,
+    total_daily_budget_usd: float,
+    winner_creative_ids_json: str,
+    optimization_goal: str = "APP_INSTALLS",
+    app_id: str = None,
+    app_store_url: str = None,
+) -> str:
+    """Create a CBO scaling campaign for proven winner creatives (Phase 3).
+
+    Uses one broad ad set — CBO allocates budget to best performers automatically.
+    Run after identifying winners via get_creative_performance().
+
+    winner_creative_ids_json: JSON array of creative IDs, e.g. ["111", "222", "333"]
+    total_daily_budget_usd: Full campaign budget (CBO manages distribution)
+    """
+    mgr, _, _ = _get_managers()
+    promoted_object = None
+    if app_id and app_store_url:
+        promoted_object = {'application_id': app_id, 'object_store_url': app_store_url}
+    creative_ids = json.loads(winner_creative_ids_json)
+    result = mgr.create_cbo_scaling_campaign(
+        name=name,
+        total_daily_budget_usd=total_daily_budget_usd,
+        winner_creative_ids=creative_ids,
+        optimization_goal=optimization_goal,
+        promoted_object=promoted_object,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def get_launch_checklist(campaign_id: str, target_cpt_usd: float) -> str:
+    """Phase 5 — Run the pre-launch checklist before activating 30 ad sets.
+
+    Validates:
+    - CAPI pixel configured
+    - Financial Special Ad Category declared
+    - Audience Network excluded
+    - Budget ≥ 5× target CPT per ad set
+    - Optimization event is a conversion (not clicks)
+    - All ad sets have creatives wired
+
+    Returns ready: true/false with specific actions needed.
+
+    target_cpt_usd: your target cost-per-trial in USD
+    """
+    mgr, _, _ = _get_managers()
+    result = mgr.get_launch_checklist(campaign_id, target_cpt_usd)
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def get_creative_performance(
+    campaign_id: str,
+    days: int = 7,
+    target_cpt_usd: float = None,
+) -> str:
+    """Phase 4.3/6 — Pull ad-level creative performance with kill/winner verdicts.
+
+    Metrics per creative: Hook Rate (stop-scroll %), Hold Rate (retention %),
+    CTR, CPT (cost per trial), frequency, and verdict classification.
+
+    Verdicts applied:
+    - winner: CPT ≤ target AND Hook Rate ≥ 30%
+    - kill: Hook Rate < 25%, OR 3× CPT spent with 0 conversions, OR CPT > 2× target by day 10
+    - fatigued: frequency > 3.0 AND CTR degrading (needs creative refresh not replacement)
+    - gray_zone: CPT within 30% of target — give 3 more days
+
+    target_cpt_usd: your target cost-per-trial (required for kill/winner verdicts)
+    """
+    _, analytics, _ = _get_managers()
+    result = analytics.get_creative_performance(
+        campaign_id=campaign_id,
+        days=days,
+        target_cpt_usd=target_cpt_usd,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def weekly_creative_review(
+    campaign_id: str,
+    target_cpt_usd: float,
+    dry_run: bool = True,
+) -> str:
+    """Phase 6 — Run the full Monday weekly review (60-minute process automated).
+
+    Pulls creative performance, applies kill rules, pauses losers (if dry_run=False),
+    identifies winners for CBO promotion, and generates next week's 70/20/10 brief.
+
+    Always run with dry_run=True first to preview decisions before applying.
+
+    Kill rules:
+    - Hook Rate < 25% → kill
+    - 3× target CPT spent with 0 conversions → kill
+    - CPT > 2× target by day 10 → kill
+    - Frequency > 3.0 + CTR < 0.5% → fatigued (refresh, not kill)
+    """
+    _, _, optimizer = _get_managers()
+    result = optimizer.weekly_creative_review(
+        campaign_id=campaign_id,
+        target_cpt_usd=target_cpt_usd,
+        dry_run=dry_run,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def check_scale_triggers(campaign_id: str, days: int = 7) -> str:
+    """Phase 7 — Check whether you've hit the thresholds to deepen optimization.
+
+    Returns your current stage and exact next action:
+
+    Stage 0: < 50 installs/week — not enough volume
+    Stage 1: 50+ installs but < 50 trials/week — keep on installs, test creatives
+    Stage 2: 50-150 trials/week — switch to StartTrial optimization, scale CBO
+    Stage 3: 150+ trials/week — test Activated Trial custom event
+    Stage 4: 50+ subscribes/week — switch to Subscribe event + value-based bidding
+
+    Meta needs 50 qualifying events/ad set/week to exit learning phase.
+    """
+    mgr, _, _ = _get_managers()
+    result = mgr.check_scale_triggers(campaign_id=campaign_id, days=days)
+    return json.dumps(result, indent=2, default=str)
+
+
 if __name__ == "__main__":
     mcp.run()

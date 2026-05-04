@@ -157,7 +157,8 @@ class FacebookAdsClient:
         bid_strategy: str = "LOWEST_COST_WITHOUT_CAP",
         bid_amount: Optional[int] = None,
         status: str = "PAUSED",
-        promoted_object: Optional[Dict] = None
+        promoted_object: Optional[Dict] = None,
+        exclude_audience_network: bool = True
     ) -> AdSet:
         """Create a new ad set.
 
@@ -173,6 +174,9 @@ class FacebookAdsClient:
             status: Ad set status
             promoted_object: Promoted object (for app installs, page likes, etc.)
                             Example: {'application_id': '123', 'object_store_url': 'https://...'}
+            exclude_audience_network: Drop Audience Network placement (default True).
+                            Audience Network is off-platform inventory with high accidental-click
+                            and bot-adjacent traffic — almost always harmful for subscription apps.
 
         Returns:
             Created ad set object
@@ -187,6 +191,11 @@ class FacebookAdsClient:
             'bid_strategy': bid_strategy,
             'status': status,
         }
+
+        # Exclude Audience Network by default — it delivers low-quality traffic
+        # for subscription apps (accidental clicks, bot-adjacent inventory).
+        if exclude_audience_network:
+            params['publisher_platforms'] = ['facebook', 'instagram', 'messenger']
 
         if bid_amount is not None:
             params['bid_amount'] = bid_amount

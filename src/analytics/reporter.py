@@ -1,5 +1,6 @@
 """Analytics and reporting module."""
 
+import json
 from typing import Dict, List, Optional, Union
 import pandas as pd
 from datetime import datetime, timedelta
@@ -263,6 +264,245 @@ class AnalyticsReporter:
             90: 'last_90d'
         }
         return presets.get(days, 'last_7d')
+
+    # ── Hormozi Creative Performance Tracker (Phase 4.3) ──────────────────────
+
+    def get_creative_performance(
+        self,
+        campaign_id: str,
+        days: int = 7,
+        target_cpt_usd: Optional[float] = None,
+    ) -> Dict:
+        """Pull ad-level performance and classify each creative against kill criteria.
+
+        Requires the campaign to have been created via create_hormozi_testing_campaign()
+        so the angle/hook mapping file exists in campaign_mappings/{campaign_id}.json.
+
+        Metrics returned per creative:
+          - hook_rate: 3-second video views / impressions (stop-scroll signal)
+          - hold_rate: 15-second video views / 3-second video views (body retention)
+          - ctr: link clicks / impressions × 100
+          - cpt: spend / trial_start events (cost per trial)
+          - cpa: spend / all conversions
+          - frequency: avg times same user saw this ad
+          - verdict: winner | gray_zone | kill | fatigued | insufficient_data
+
+        Kill rules (from Phase 6 plan):
+          - hook_rate < 0.25 → kill (scroll-stop failure)
+          - spent ≥ 3× target_cpt with 0 conversions → kill (structural failure)
+          - cpt > 2× target_cpt by day 10 → kill
+          - frequency > 3.0 AND ctr dropped > 30% from peak → fatigued (creative refresh)
+          - cpt ≤ target_cpt for 5+ days, hook_rate ≥ 0.30 → winner
+
+        Args:
+            campaign_id: Testing campaign ID
+            days: Lookback window (use 7 for weekly review)
+            target_cpt_usd: Your target cost-per-trial. Required for kill/winner verdicts.
+
+        Returns:
+            {ads: [ranked list with verdicts], summary, winners, kills, gray_zone, fatigued}
+        """
+        from facebook_business.adobjects.ad import Ad as FBAd
+
+        # Load angle/hook mapping
+        mapping_path = Path("campaign_mappings") / f"{campaign_id}.json"
+        angle_map: Dict[str, Dict] = {}
+        if mapping_path.exists():
+            with open(mapping_path) as f:
+                mapping_data = json.load(f)
+            for adset in mapping_data.get('adsets', []):
+                if adset.get('ad_id'):
+                    angle_map[adset['ad_id']] = adset
+
+        # Get all ads in the campaign
+        adsets = self.client.get_adsets(campaign_id=campaign_id)
+        ads_data = []
+
+        for adset in adsets:
+            adset_id = adset['id']
+            ads = self.client.get_ads(adset_id=adset_id)
+
+            for ad in ads:
+                ad_id = ad['id']
+                try:
+                    fb_ad = FBAd(ad_id)
+                    date_preset = self._days_to_preset(days)
+
+                    # Request video-specific fields for Hook/Hold Rate alongside standard metrics
+                    insights = fb_ad.get_insights(
+                        fields=[
+                            'spend', 'impressions', 'clicks', 'ctr', 'frequency',
+                            'actions',
+                            'video_3_sec_watched_actions',   # Hook Rate numerator
+                            'video_15_sec_watched_actions',  # Hold Rate numerator
+                            'video_30_sec_watched_actions',
+                        ],
+                        params={'date_preset': date_preset}
+                    )
+
+                    if not insights:
+                        continue
+
+                    insight = dict(insights[0])
+                    spend = float(insight.get('spend', 0))
+                    impressions = int(insight.get('impressions', 0))
+                    clicks = int(insight.get('clicks', 0))
+                    frequency = float(insight.get('frequency', 0))
+
+                    if impressions == 0:
+                        continue
+
+                    # Hook Rate: % who watched ≥3 seconds (stop-scroll signal)
+                    three_sec = self._extract_video_action(
+                        insight.get('video_3_sec_watched_actions', [])
+                    )
+                    fifteen_sec = self._extract_video_action(
+                        insight.get('video_15_sec_watched_actions', [])
+                    )
+                    hook_rate = (three_sec / impressions) if impressions > 0 else 0
+                    hold_rate = (fifteen_sec / three_sec) if three_sec > 0 else 0
+
+                    ctr = (clicks / impressions) if impressions > 0 else 0
+
+                    # Extract trial and conversion events
+                    trial_events = self._extract_action_by_type(
+                        insight.get('actions', []),
+                        ['start_trial', 'StartTrial']
+                    )
+                    conversions = self._extract_action_by_type(
+                        insight.get('actions', []),
+                        ['purchase', 'subscribe', 'complete_registration',
+                         'offsite_conversion.fb_pixel_purchase']
+                    )
+
+                    cpt = (spend / trial_events) if trial_events > 0 else None
+                    cpa = (spend / conversions) if conversions > 0 else None
+
+                    # Join with angle/hook data
+                    meta = angle_map.get(ad_id, {})
+
+                    record = {
+                        'ad_id': ad_id,
+                        'adset_id': adset_id,
+                        'ad_name': ad.get('name', ''),
+                        'angle_id': meta.get('angle_id'),
+                        'hook_id': meta.get('hook_id'),
+                        'angle_name': meta.get('angle_name', 'Unknown'),
+                        'hook_format': meta.get('hook_format', 'Unknown'),
+                        'hook_opening': meta.get('hook_opening', ''),
+                        'spend': round(spend, 2),
+                        'impressions': impressions,
+                        'clicks': clicks,
+                        'ctr_pct': round(ctr * 100, 2),
+                        'hook_rate_pct': round(hook_rate * 100, 2),
+                        'hold_rate_pct': round(hold_rate * 100, 2),
+                        'trial_events': trial_events,
+                        'conversions': conversions,
+                        'cpt': round(cpt, 2) if cpt else None,
+                        'cpa': round(cpa, 2) if cpa else None,
+                        'frequency': round(frequency, 2),
+                    }
+
+                    # Apply verdict
+                    record['verdict'] = self._classify_creative(
+                        record, target_cpt_usd, days
+                    )
+                    ads_data.append(record)
+
+                except Exception as e:
+                    logger.warning(f"Could not fetch insights for ad {ad_id}: {e}")
+
+        if not ads_data:
+            return {'ads': [], 'summary': 'No data available', 'winners': [],
+                    'kills': [], 'gray_zone': [], 'fatigued': []}
+
+        # Sort by CPT ascending (nulls last), then hook_rate descending
+        ads_data.sort(key=lambda x: (x['cpt'] is None, x['cpt'] or 999, -x['hook_rate_pct']))
+
+        winners = [a for a in ads_data if a['verdict'] == 'winner']
+        kills = [a for a in ads_data if a['verdict'] == 'kill']
+        gray_zone = [a for a in ads_data if a['verdict'] == 'gray_zone']
+        fatigued = [a for a in ads_data if a['verdict'] == 'fatigued']
+
+        return {
+            'campaign_id': campaign_id,
+            'days': days,
+            'target_cpt_usd': target_cpt_usd,
+            'ads': ads_data,
+            'summary': (
+                f"{len(ads_data)} ads tracked | "
+                f"{len(winners)} winners | {len(kills)} kills | "
+                f"{len(gray_zone)} gray zone | {len(fatigued)} fatigued"
+            ),
+            'winners': winners,
+            'kills': kills,
+            'gray_zone': gray_zone,
+            'fatigued': fatigued,
+        }
+
+    def _classify_creative(
+        self,
+        record: Dict,
+        target_cpt: Optional[float],
+        days: int
+    ) -> str:
+        """Apply Phase 6 kill/winner rules to a single creative's data."""
+        spend = record['spend']
+        hook_rate = record['hook_rate_pct'] / 100
+        frequency = record['frequency']
+        ctr = record['ctr_pct'] / 100
+        cpt = record['cpt']
+        conversions = record['conversions']
+
+        # Insufficient data — too early to judge
+        if spend < 10 or record['impressions'] < 500:
+            return 'insufficient_data'
+
+        # Hard kill: Hook Rate below floor (scroll-stop failure regardless of spend)
+        if hook_rate < 0.25 and spend > 20:
+            return 'kill'
+
+        if target_cpt:
+            # Hard kill: 3× CPT spent with zero conversions (structural failure)
+            if spend >= target_cpt * 3 and conversions == 0:
+                return 'kill'
+
+            # Kill by day 10: CPT > 2× target with no downward trend
+            if days >= 10 and cpt and cpt > target_cpt * 2:
+                return 'kill'
+
+            # Winner: CPT at or below target, Hook Rate strong
+            if cpt and cpt <= target_cpt and hook_rate >= 0.30:
+                return 'winner'
+
+            # Gray zone: CPT up to 30% above target — give more time
+            if cpt and cpt <= target_cpt * 1.3:
+                return 'gray_zone'
+
+        # Fatigued: high frequency but degrading engagement
+        if frequency > 3.0 and ctr < 0.005:
+            return 'fatigued'
+
+        return 'gray_zone'
+
+    def _extract_video_action(self, actions: List) -> int:
+        """Extract count from a video action list (Meta returns [{action_type, value}])."""
+        if not actions:
+            return 0
+        for action in actions:
+            if isinstance(action, dict):
+                return int(action.get('value', 0))
+        return 0
+
+    def _extract_action_by_type(self, actions: List, types: List[str]) -> int:
+        """Sum action values matching any of the given action_type strings."""
+        total = 0
+        for action in actions:
+            if isinstance(action, dict):
+                action_type = action.get('action_type', '').lower()
+                if any(t.lower() in action_type for t in types):
+                    total += int(action.get('value', 0))
+        return total
 
     def detect_anomalies(self, campaign_id: str) -> List[Dict]:
         """Detect performance anomalies.
