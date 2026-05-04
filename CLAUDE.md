@@ -4,261 +4,100 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Facebook Ads Manager is a Python-based tool for programmatically managing Facebook ad campaigns with automation, analytics, and optimization capabilities. Built around the Facebook Marketing API (facebook-business SDK), it provides both a CLI interface and a FastAPI-based web dashboard.
-
-**Requirements:** Python 3.9+
+Facebook Ads Manager is a Python-based tool (Python 3.9+) for programmatically managing Facebook/Meta ad campaigns. It wraps the `facebook-business` SDK and exposes capabilities through three interfaces: a Click-based CLI, a FastAPI web dashboard, and an MCP server.
 
 ## Key Commands
 
-### Environment Setup
 ```bash
-# Activate virtual environment
+# Setup
 source venv/bin/activate
-
-# Install/update dependencies
 pip install -r requirements.txt
-```
 
-### Running the Application
-```bash
-# Launch web dashboard
+# Web dashboard (http://localhost:8000)
 python run_web.py
-# Access at http://localhost:8000
 
-# CLI usage (development mode)
+# CLI (development)
 python -m src.cli <command>
 
-# CLI usage (after pip install -e .)
+# CLI (after pip install -e .)
 fbads <command>
-```
 
-**Note:** Use `python3` instead of `python` if your system requires it. The CLI has two modes:
-- **Development mode**: `python -m src.cli` - works immediately after cloning
-- **Installed mode**: `fbads` - available after running `pip install -e .` (editable install)
+# MCP server
+python src/mcp_server.py
 
-### Testing
-```bash
-# Run all tests
+# Tests
 pytest tests/
-
-# Run with coverage
-pytest --cov=src --cov-report=html --cov-report=term tests/
-
-# Run specific test file
-pytest tests/test_api_client.py
-
-# Run specific test class or function
 pytest tests/test_api_client.py::TestCampaignManagement::test_create_campaign_basic
+pytest --cov=src --cov-report=term tests/
 
-# Run with verbose output
-pytest -v tests/
-
-# Run with output captured (show prints)
-pytest -s tests/
-```
-
-### Code Quality
-```bash
-# Format code
+# Code quality
 black src/ tests/
-
-# Lint code
 flake8 src/ tests/
-
-# Type checking
 mypy src/
 ```
 
 ## Architecture
 
-### Layered Design
-The codebase follows a three-tier architecture:
+### Three-tier layered design
+1. **Core** (`src/api_client.py`): `FacebookAdsClient` — single source of truth for all Meta API calls. Reads `config/config.yaml` on init. `FB_CONFIG_PATH` env var overrides the config path.
+2. **Application layer** (manager modules): business logic wrapping the client
+3. **Interfaces**: CLI (`src/cli.py`), web app (`src/web/app.py`), MCP server (`src/mcp_server.py`)
 
-1. **Core Layer** (`src/api_client.py`): Low-level Facebook Marketing API wrapper
-2. **Application Layer** (manager modules): Business logic and high-level operations
-3. **Interface Layer** (`src/cli.py`, `src/web/app.py`): User-facing interfaces
+### Key modules
 
-### Key Components
+**`src/campaign/manager.py`** — `CampaignManager`: CRUD, budget operations. Input budgets are USD; the API requires cents — manager multiplies by 100 on write, divides on display.
 
-**FacebookAdsClient** (`src/api_client.py`)
-- Single source of truth for all Facebook API interactions
-- Handles authentication, error handling, and API initialization
-- Provides CRUD operations for campaigns, ad sets, ads, and creatives
-- All other modules depend on this client
+**`src/analytics/reporter.py`** — `AnalyticsReporter`: fetches insights, calculates CTR/CPC/ROAS, generates reports.
 
-**Manager Modules** (in `src/*/manager.py`)
-- CampaignManager: High-level campaign operations, budget conversion (USD to cents)
-- CreativeManager: Ad creative and asset management
-- Each manager wraps the API client with business logic and convenience methods
+**`src/analytics/advanced_analytics.py`** — `AdvancedAnalytics`: time-series analysis, trend detection, anomaly detection, forecasting, and chart exports (matplotlib/seaborn). Caches to `cache/`, exports to `exports/`.
 
-**Analytics & Optimization** (`src/analytics/`, `src/optimization/`)
-- AnalyticsReporter: Fetches insights, calculates metrics (CTR, CPC, ROAS), generates reports
-- BudgetOptimizer: Automated budget allocation based on performance
-- ABTestManager: A/B testing with statistical analysis (scipy)
-- ML Optimizer: Machine learning-based campaign optimization
+**`src/optimization/optimizer.py`** — `BudgetOptimizer`: performance-based budget rebalancing, pausing underperformers. All mutation methods support `dry_run=True`.
 
-**Automation** (`src/automation/`)
-- RulesEngine: Condition-based automation (pause underperformers, scale winners)
-- CampaignScheduler: Time-based campaign scheduling
-- WorkflowAutomation: Multi-step workflow orchestration
+**`src/optimization/ab_testing.py`** — `ABTestManager`: A/B testing with scipy statistical analysis.
 
-**Database** (`src/database/`)
-- DatabaseManager: SQLAlchemy-based data persistence for caching and analytics
-- Models: Campaign, AdSet, Ad, and metrics models for local storage
-- Used for analytics caching and historical performance tracking
+**`src/optimization/ml_optimizer.py`** — ML-based campaign optimization (scikit-learn).
 
-**Web Dashboard** (`src/web/`)
-- FastAPI application with Jinja2 templates
-- RESTful API endpoints for campaigns, analytics, optimization
-- Lazy-loads clients to handle configuration errors gracefully
+**`src/creative/image_generator.py`** — `AIImageGenerator`: generates ad images. Default provider is **Google Gemini 2.5 Flash Image** (`provider: "google"` in config). Falls back to OpenAI DALL-E 3. Factory function `create_image_generator_from_config(config)` reads `ai_image.provider` from config.
 
-### Data Flow Pattern
+**`src/creative/ai_ad_generator.py`** — `AIAdGenerator`: GPT-4-powered ad copy generation (separate from image generation).
+
+**`src/conversion/tracker.py`** — `ConversionTracker`: server-side conversion tracking via Facebook Conversions API. Hashes PII (email, phone, name) with SHA-256. Requires `pixel_id` from Facebook Events Manager.
+
+**`src/targeting/builder.py`** — fluent API for building custom targeting specs.
+
+**`src/targeting/presets.py`** — 14 pre-built targeting presets (e.g., `ecommerce_shoppers`, `tech_enthusiasts`).
+
+**`src/automation/`** — `RulesEngine` (condition-based), `CampaignScheduler` (time-based), `WorkflowAutomation` (multi-step).
+
+**`src/database/`** — SQLAlchemy models and `DatabaseManager` for local caching and historical metrics.
+
+**`src/mcp_server.py`** — MCP server exposing ~25 tools for full Meta Ads account management (campaigns, ad sets, ads, creatives, optimization, reporting). Uses `FastMCP` from `mcp` package. Entry point: `if __name__ == "__main__": mcp.run()`.
+
+### Data flow
 ```
-User Input → CLI/Web Interface → Manager Module → FacebookAdsClient → Facebook Marketing API
+User → CLI / Web / MCP → Manager → FacebookAdsClient → Meta Marketing API
 ```
 
 ## Configuration
 
-### Structure
-Configuration is managed through `config/config.yaml` (gitignored). Copy from `config/config.example.yaml` to get started.
+Copy `config/config.example.yaml` → `config/config.yaml` (gitignored).
 
-**Critical sections:**
-- `facebook`: API credentials (app_id, app_secret, access_token, ad_account_id, page_id)
-- `campaigns`: Default campaign settings and budgets
-- `targeting`: Default targeting parameters
-- `optimization`: Thresholds for auto-pause, budget optimization, A/B testing
-- `analytics`: Reporting metrics and caching settings
+Critical keys:
+- `facebook.app_id/app_secret/access_token/ad_account_id/page_id/pixel_id`
+- `facebook.api_version`: currently `v19.0`
+- `ai_image.provider`: `"google"` (default) or `"openai"`
+- `openai.api_key` / `google.api_key` (or set `OPENAI_API_KEY` / `GOOGLE_API_KEY` env vars)
+- `optimization.min_roas/min_ctr/max_cpa`: thresholds used by BudgetOptimizer and RulesEngine
+- `analytics.cache_ttl_hours`
 
-### Budget Handling
-All budget amounts in the Facebook API are in **cents**. Manager modules handle conversion:
-- User input: USD (dollars)
-- Internal/API: cents
-- CampaignManager.create_campaign() multiplies by 100
-- Display methods divide by 100
+**Ad Account ID must include the `act_` prefix**: `act_XXXXXXXXXX`.
 
-### Accessing Configuration
-All modules access config through the API client:
-```python
-self.client.config['optimization']['min_roas']
-```
+## Testing
 
-## Module Relationships
+All tests mock `FacebookAdsClient` — no real credentials or network needed. Fixtures are in `tests/conftest.py`. Tests in `tests/test_integration.py` test complete workflows end-to-end against mocks.
 
-### Dependencies
-- All managers depend on `FacebookAdsClient`
-- CLI depends on all manager modules
-- Web app depends on managers (lazy-loaded)
-- Tests mock `FacebookAdsClient` to avoid real API calls
+## Automation scripts
 
-### Targeting System
-The targeting system is split across two modules:
-- `src/targeting/builder.py`: Fluent API for building custom targeting specs
-- `src/targeting/presets.py`: Pre-configured targeting presets (14 presets including ecommerce_shoppers, tech_enthusiasts, etc.)
+`scripts/daily_automation.py`, `scripts/weekly_optimization.py`, `scripts/emergency_pause.py` — designed for cron. All support `--dry-run`.
 
-Usage pattern: Build targeting → Pass to create_adset()
-
-## Important Implementation Details
-
-### Error Handling
-- Facebook API errors raise `FacebookRequestError` (from facebook-business SDK)
-- All modules use loguru for logging
-- Configuration errors should be caught early (in __init__ methods)
-- API rate limits should be handled with exponential backoff (if implemented)
-
-### Testing Strategy
-- All tests mock the Facebook API to avoid real API calls
-- Tests don't require credentials or internet connection
-- Fixtures in `tests/conftest.py` provide mock data and objects
-- Goal: >90% code coverage, 100% on critical paths
-
-### CLI Structure
-Built with Click framework:
-- Command groups match domain structure (campaign, analytics, optimize, test, etc.)
-- Context object passes shared clients between commands
-- Rich library for formatted terminal output
-
-### Web Application
-- FastAPI with uvicorn server
-- Templates in `src/web/templates/`, static files in `src/web/static/`
-- Lazy client initialization to handle config errors gracefully
-- CORS enabled for all origins (development mode)
-
-## Development Workflow
-
-### Adding a New Feature
-1. Extend `FacebookAdsClient` with new API methods (if needed)
-2. Create/update manager module with business logic
-3. Add CLI commands in `src/cli.py`
-4. Add web endpoints in `src/web/app.py` (if needed)
-5. Write unit tests in `tests/`
-6. Update documentation in `docs/`
-
-### Adding a New Metric
-1. Add field to `get_campaign_insights()` or similar method in api_client.py
-2. Calculate derived metric in AnalyticsReporter._format_insights()
-3. Update display methods to show new metric
-4. Add to default_metrics in config.example.yaml
-
-### Testing Changes
-- Write unit tests that mock FacebookAdsClient
-- Integration tests should test complete workflows
-- Use existing fixtures from conftest.py
-- Ensure tests remain fast and deterministic
-
-## Special Considerations
-
-### Credentials Security
-- Never commit `config/config.yaml` (already in .gitignore)
-- Access tokens expire - tokens should be long-lived (60 days)
-- Use Facebook Token Debugger to extend tokens
-
-### Facebook API Quirks
-- Ad Account ID format: "act_XXXXXXXXXX" (must include "act_" prefix)
-- Budgets are in cents, not dollars
-- API version is important (currently v19.0)
-- Rate limits apply - batch requests when possible
-
-### Automation Scripts
-Scripts in `scripts/` directory are meant to be run via cron:
-- `daily_automation.py`: Daily optimization and budget adjustments
-- `emergency_pause.py`: Immediately pause underperforming campaigns
-- `weekly_optimization.py`: Weekly portfolio rebalancing
-
-All automation scripts support `--dry-run` flag for testing.
-
-## Common Patterns
-
-### Creating a Manager Instance
-```python
-from src.api_client import FacebookAdsClient
-from src.campaign.manager import CampaignManager
-
-client = FacebookAdsClient()  # Loads config/config.yaml
-manager = CampaignManager(client)
-```
-
-### Error Handling Pattern
-```python
-from facebook_business.exceptions import FacebookRequestError
-from loguru import logger
-
-try:
-    result = self.client.some_method()
-except FacebookRequestError as e:
-    logger.error(f"Facebook API error: {e.api_error_message()}")
-    raise
-except Exception as e:
-    logger.error(f"Unexpected error: {e}")
-    raise
-```
-
-### Lazy Loading Pattern (Web App)
-```python
-_client = None
-
-def get_client():
-    global _client
-    if _client is None:
-        _client = FacebookAdsClient()
-    return _client
-```
+The root directory contains many one-off setup and diagnostic scripts (`create_*.py`, `configure_*.py`, `check_*.py`, etc.) that were used during initial setup and are not part of the application proper.
