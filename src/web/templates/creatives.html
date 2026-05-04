@@ -97,18 +97,34 @@
                         </div>
 
                         <!-- Performance Metrics -->
-                        <div class="mt-4 grid grid-cols-3 gap-2 text-center">
-                            <div>
-                                <div class="text-xs text-gray-500">CTR</div>
-                                <div class="text-sm font-semibold text-gray-900" x-text="creative.ctr + '%'"></div>
+                        <div class="mt-4 border-t pt-3">
+                            <div class="grid grid-cols-3 gap-2 text-center mb-2">
+                                <div>
+                                    <div class="text-xs text-gray-500">Impressions</div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="formatNumber(creative.impressions)"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">Clicks</div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="formatNumber(creative.clicks)"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">CTR</div>
+                                    <div class="text-sm font-semibold" :class="creative.ctr >= 1 ? 'text-green-600' : 'text-gray-900'" x-text="creative.ctr.toFixed(2) + '%'"></div>
+                                </div>
                             </div>
-                            <div>
-                                <div class="text-xs text-gray-500">Clicks</div>
-                                <div class="text-sm font-semibold text-gray-900" x-text="formatNumber(creative.clicks)"></div>
-                            </div>
-                            <div>
-                                <div class="text-xs text-gray-500">Conv.</div>
-                                <div class="text-sm font-semibold text-gray-900" x-text="creative.conversions"></div>
+                            <div class="grid grid-cols-3 gap-2 text-center">
+                                <div>
+                                    <div class="text-xs text-gray-500">Spend</div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="'$' + creative.spend.toFixed(2)"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">CPC</div>
+                                    <div class="text-sm font-semibold text-gray-900" x-text="'$' + creative.cpc.toFixed(2)"></div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-gray-500">Conv.</div>
+                                    <div class="text-sm font-semibold" :class="creative.conversions > 0 ? 'text-green-600' : 'text-gray-900'" x-text="creative.conversions"></div>
+                                </div>
                             </div>
                         </div>
 
@@ -276,15 +292,22 @@ function creatives() {
 
         async loadCreatives() {
             try {
-                const response = await fetch('/api/creatives');
+                const response = await fetch('/api/creatives?include_stats=true');
                 const data = await response.json();
                 this.creatives = data.creatives.map(c => ({
                     ...c,
                     copy: c.description || '',
                     thumbnail: c.thumbnail_url,
-                    status: c.status.toLowerCase()
+                    status: c.status.toLowerCase(),
+                    // Use real stats from API
+                    ctr: c.stats?.ctr || 0,
+                    clicks: c.stats?.clicks || 0,
+                    conversions: c.stats?.conversions || 0,
+                    impressions: c.stats?.impressions || 0,
+                    spend: c.stats?.spend || 0,
+                    cpc: c.stats?.cpc || 0
                 }));
-                console.log(`✅ Loaded ${this.creatives.length} real Facebook creatives`);
+                console.log(`✅ Loaded ${this.creatives.length} real Facebook creatives with stats`);
             } catch (error) {
                 console.error('Failed to load creatives:', error);
                 notify('Failed to load creatives', 'error');

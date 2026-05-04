@@ -32,16 +32,16 @@
                 <p class="text-2xl font-bold text-gray-900" x-text="ads.length"></p>
             </div>
             <div class="bg-white rounded-lg shadow p-4">
-                <p class="text-sm font-medium text-gray-500">Active</p>
-                <p class="text-2xl font-bold text-green-600" x-text="ads.filter(a => a.status === 'ACTIVE').length"></p>
+                <p class="text-sm font-medium text-gray-500">Total Spend</p>
+                <p class="text-2xl font-bold text-blue-600" x-text="'$' + totalSpend.toFixed(2)"></p>
             </div>
             <div class="bg-white rounded-lg shadow p-4">
-                <p class="text-sm font-medium text-gray-500">Paused</p>
-                <p class="text-2xl font-bold text-yellow-600" x-text="ads.filter(a => a.status === 'PAUSED').length"></p>
+                <p class="text-sm font-medium text-gray-500">Total Impressions</p>
+                <p class="text-2xl font-bold text-purple-600" x-text="formatNumber(totalImpressions)"></p>
             </div>
             <div class="bg-white rounded-lg shadow p-4">
-                <p class="text-sm font-medium text-gray-500">With Creatives</p>
-                <p class="text-2xl font-bold text-blue-600" x-text="ads.filter(a => a.creative_id).length"></p>
+                <p class="text-sm font-medium text-gray-500">Total Conversions</p>
+                <p class="text-2xl font-bold text-green-600" x-text="totalConversions"></p>
             </div>
         </div>
 
@@ -53,6 +53,7 @@
                         <tr>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Ad Name</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Performance</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Creative</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Campaign</th>
                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -70,8 +71,52 @@
                                           :class="ad.status === 'ACTIVE' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'"
                                           x-text="ad.status"></span>
                                 </td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    <span x-text="ad.creative_id || 'No creative'"></span>
+                                <td class="px-6 py-4">
+                                    <div x-show="ad.stats" class="grid grid-cols-3 gap-3 text-xs">
+                                        <!-- Top Row -->
+                                        <div>
+                                            <div class="text-gray-500">Impressions</div>
+                                            <div class="font-semibold" x-text="formatNumber(ad.stats?.impressions || 0)"></div>
+                                        </div>
+                                        <div>
+                                            <div class="text-gray-500">Clicks</div>
+                                            <div class="font-semibold" x-text="formatNumber(ad.stats?.clicks || 0)"></div>
+                                        </div>
+                                        <div>
+                                            <div class="text-gray-500">CTR</div>
+                                            <div class="font-semibold" :class="(ad.stats?.ctr || 0) >= 1 ? 'text-green-600' : 'text-gray-900'" x-text="(ad.stats?.ctr || 0).toFixed(2) + '%'"></div>
+                                        </div>
+                                        <!-- Bottom Row -->
+                                        <div>
+                                            <div class="text-gray-500">Spend</div>
+                                            <div class="font-semibold" x-text="'$' + (ad.stats?.spend || 0).toFixed(2)"></div>
+                                        </div>
+                                        <div>
+                                            <div class="text-gray-500">CPC</div>
+                                            <div class="font-semibold" x-text="'$' + (ad.stats?.cpc || 0).toFixed(2)"></div>
+                                        </div>
+                                        <div>
+                                            <div class="text-gray-500">Conv.</div>
+                                            <div class="font-semibold" :class="(ad.stats?.conversions || 0) > 0 ? 'text-green-600' : 'text-gray-900'" x-text="ad.stats?.conversions || 0"></div>
+                                        </div>
+                                    </div>
+                                    <div x-show="!ad.stats" class="text-xs text-gray-400 italic">
+                                        No data yet
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div x-show="ad.creative_thumbnail" class="flex items-center space-x-2">
+                                        <img :src="ad.creative_thumbnail"
+                                             :alt="ad.name"
+                                             class="h-16 w-16 object-cover rounded border border-gray-200 cursor-pointer hover:opacity-75"
+                                             @click="openImageModal(ad.creative_thumbnail, ad.name, ad)">
+                                        <div class="text-xs text-gray-500">
+                                            <div>Click to enlarge</div>
+                                        </div>
+                                    </div>
+                                    <div x-show="!ad.creative_thumbnail" class="text-sm text-gray-400 italic">
+                                        <span x-text="ad.creative_id || 'No creative'"></span>
+                                    </div>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     <span x-text="ad.campaign_id || 'N/A'"></span>
@@ -108,6 +153,64 @@
                     <button @click="showCreateModal = true" class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
                         Create Your First Ad
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full Ad Preview Modal -->
+        <div x-show="showImageModal"
+             @click="showImageModal = false"
+             class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4"
+             style="display: none;">
+            <div @click.stop class="relative max-w-2xl w-full bg-white rounded-lg shadow-2xl overflow-hidden">
+                <!-- Close Button -->
+                <button @click="showImageModal = false"
+                        class="absolute top-2 right-2 z-10 bg-white rounded-full p-1 shadow-lg hover:bg-gray-100">
+                    <svg class="h-6 w-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+
+                <!-- Facebook-style Ad Preview -->
+                <div class="p-4">
+                    <!-- Page Header (Stock Alarm Professional) -->
+                    <div class="flex items-center mb-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
+                            SA
+                        </div>
+                        <div class="ml-3">
+                            <div class="font-semibold text-sm">Stock Alarm Professional</div>
+                            <div class="text-xs text-gray-500">Sponsored</div>
+                        </div>
+                    </div>
+
+                    <!-- Ad Text (Primary Text) -->
+                    <div class="mb-3 text-sm" x-show="currentAd && currentAd.creative_message">
+                        <p x-text="currentAd?.creative_message"></p>
+                    </div>
+
+                    <!-- Ad Image (Full Resolution) -->
+                    <img :src="modalImageUrl"
+                         :alt="modalImageTitle"
+                         class="w-full h-auto rounded border border-gray-200"
+                         style="image-rendering: -webkit-optimize-contrast; image-rendering: crisp-edges; max-width: 100%; height: auto;">
+
+                    <!-- Ad Details Below Image -->
+                    <div class="bg-gray-50 p-4 border border-t-0 border-gray-200">
+                        <!-- Headline -->
+                        <div class="font-bold text-lg mb-1" x-show="currentAd && currentAd.creative_headline" x-text="currentAd?.creative_headline"></div>
+
+                        <!-- Description -->
+                        <div class="text-sm text-gray-600 mb-3" x-show="currentAd && currentAd.creative_description" x-text="currentAd?.creative_description"></div>
+
+                        <!-- CTA Button -->
+                        <button class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded"
+                                x-show="currentAd && currentAd.creative_cta"
+                                x-text="currentAd?.creative_cta || 'Learn More'"></button>
+
+                        <!-- Link -->
+                        <div class="mt-2 text-xs text-gray-400 truncate" x-show="currentAd && currentAd.creative_link" x-text="currentAd?.creative_link"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -229,6 +332,10 @@ function adsManager() {
         ads: [],
         creatives: [],
         showCreateModal: false,
+        showImageModal: false,
+        modalImageUrl: '',
+        modalImageTitle: '',
+        currentAd: null,
         loading: false,
         successMessage: '',
         errorMessage: '',
@@ -242,13 +349,25 @@ function adsManager() {
             status: 'PAUSED'
         },
 
+        get totalSpend() {
+            return this.ads.reduce((sum, ad) => sum + (ad.stats?.spend || 0), 0);
+        },
+
+        get totalImpressions() {
+            return this.ads.reduce((sum, ad) => sum + (ad.stats?.impressions || 0), 0);
+        },
+
+        get totalConversions() {
+            return this.ads.reduce((sum, ad) => sum + (ad.stats?.conversions || 0), 0);
+        },
+
         async init() {
             await this.loadAds();
         },
 
         async loadAds() {
             try {
-                const response = await fetch('/api/ads?limit=100');
+                const response = await fetch('/api/ads?limit=100&include_stats=true');
                 const data = await response.json();
                 this.ads = data.ads || [];
                 console.log(`✅ Loaded ${this.ads.length} ads`);
@@ -360,6 +479,19 @@ function adsManager() {
                 optimization_goal: 'LINK_CLICKS',
                 status: 'PAUSED'
             };
+        },
+
+        formatNumber(num) {
+            if (!num) return '0';
+            return num.toLocaleString();
+        },
+
+        openImageModal(imageUrl, title, ad) {
+            // Use full-resolution image if available, otherwise use thumbnail
+            this.modalImageUrl = ad.creative_full_image || imageUrl;
+            this.modalImageTitle = title;
+            this.currentAd = ad;
+            this.showImageModal = true;
         },
 
         showSuccess(message) {

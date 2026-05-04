@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 import logging
 import io
+import traceback
 import requests as http_requests
 
 from ..api_client import FacebookAdsClient
@@ -18,6 +19,7 @@ from ..analytics.reporter import AnalyticsReporter
 from ..optimization.optimizer import BudgetOptimizer
 from ..creative.image_generator import AIImageGenerator, create_image_generator_from_config
 from ..creative.ai_ad_generator import AIAdGenerator
+from ..conversion.tracker import ConversionTracker
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -349,8 +351,8 @@ async def rebalance_portfolio(total_budget: float, dry_run: bool = True):
 # Creative Management Endpoints
 
 @app.get("/api/creatives")
-async def get_creatives():
-    """Get all ad creatives from Facebook."""
+async def get_creatives(include_stats: bool = True):
+    """Get all ad creatives from Facebook with performance stats."""
     try:
         client, _, _, _, _ = get_clients()
         creatives = client.get_creatives(limit=100)
@@ -380,6 +382,82 @@ async def get_creatives():
             formatted['headline'] = link_data.get('name', '')
             formatted['description'] = link_data.get('message', '')
             formatted['call_to_action'] = link_data.get('call_to_action', {}).get('type', 'LEARN_MORE')
+
+            # Get performance stats if requested
+            if include_stats:
+                try:
+                    # Get ads using this creative
+                    from facebook_business.adobjects.ad import Ad
+
+                    # Get all ads
+                    ads = client.ad_account.get_ads(
+                        params={'effective_status': ['ACTIVE', 'PAUSED']},
+                        fields=['id', 'creative']
+                    )
+
+                    # Aggregate stats for this creative
+                    total_impressions = 0
+                    total_clicks = 0
+                    total_spend = 0
+                    total_conversions = 0
+
+                    for ad in ads:
+                        if ad.get('creative', {}).get('id') == creative.get('id'):
+                            # Fetch insights for this ad
+                            try:
+                                fb_ad = Ad(ad.get('id'))
+                                insights = fb_ad.get_insights(
+                                    fields=['spend', 'impressions', 'clicks', 'actions'],
+                                    params={'date_preset': 'maximum'}
+                                )
+
+                                if insights and len(insights) > 0:
+                                    insight = insights[0]
+                                    total_impressions += int(insight.get('impressions', 0))
+                                    total_clicks += int(insight.get('clicks', 0))
+                                    total_spend += float(insight.get('spend', 0))
+
+                                    # Get conversions if available
+                                    actions = insight.get('actions', [])
+                                    for action in actions:
+                                        if action.get('action_type') in ['purchase', 'lead', 'complete_registration', 'offsite_conversion.fb_pixel_purchase']:
+                                            total_conversions += int(action.get('value', 0))
+                            except Exception as ad_error:
+                                logger.debug(f"No insights for ad {ad.get('id')}: {ad_error}")
+
+                    # Calculate metrics
+                    ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
+                    cpc = (total_spend / total_clicks) if total_clicks > 0 else 0
+
+                    formatted['stats'] = {
+                        'impressions': total_impressions,
+                        'clicks': total_clicks,
+                        'spend': round(total_spend, 2),
+                        'conversions': total_conversions,
+                        'ctr': round(ctr, 2),
+                        'cpc': round(cpc, 2)
+                    }
+
+                except Exception as stats_error:
+                    logger.warning(f"Failed to get stats for creative {creative.get('id')}: {stats_error}")
+                    # Default stats if fetch fails
+                    formatted['stats'] = {
+                        'impressions': 0,
+                        'clicks': 0,
+                        'spend': 0,
+                        'conversions': 0,
+                        'ctr': 0,
+                        'cpc': 0
+                    }
+            else:
+                formatted['stats'] = {
+                    'impressions': 0,
+                    'clicks': 0,
+                    'spend': 0,
+                    'conversions': 0,
+                    'ctr': 0,
+                    'cpc': 0
+                }
 
             formatted_creatives.append(formatted)
 
@@ -1098,31 +1176,136 @@ async def list_ads(adset_id: str):
 
 
 @app.get("/api/ads")
-async def list_all_ads(limit: int = 100):
-    """List all ads across all campaigns."""
+async def list_all_ads(limit: int = 100, include_stats: bool = True):
+    """List all ads across all campaigns with performance stats."""
     try:
         client, _, _, _, _ = get_clients()
 
         # Get all ads from ad account
+        fields = ['id', 'name', 'status', 'creative', 'adset_id', 'campaign_id']
+
         ads = client.ad_account.get_ads(
-            fields=['id', 'name', 'status', 'creative', 'adset_id', 'campaign_id'],
+            fields=fields,
             params={'limit': limit}
         )
 
         formatted_ads = []
         for ad in ads:
-            formatted_ads.append({
+            ad_data = {
                 'id': ad.get('id'),
                 'name': ad.get('name'),
                 'status': ad.get('status'),
                 'creative_id': ad.get('creative', {}).get('id') if ad.get('creative') else None,
                 'adset_id': ad.get('adset_id'),
                 'campaign_id': ad.get('campaign_id'),
-            })
+            }
+
+            # Fetch creative details
+            creative_id = ad.get('creative', {}).get('id') if ad.get('creative') else None
+            if creative_id:
+                try:
+                    from facebook_business.adobjects.adcreative import AdCreative
+                    creative = AdCreative(creative_id)
+                    creative_data = creative.api_get(fields=[
+                        'thumbnail_url',
+                        'image_url',
+                        'object_story_spec',
+                        'title',
+                        'body',
+                        'link_url',
+                        'call_to_action_type'
+                    ])
+
+                    # Get both thumbnail and full-size image
+                    thumbnail = creative_data.get('thumbnail_url')
+                    full_image = creative_data.get('image_url') or thumbnail
+
+                    if thumbnail:
+                        ad_data['creative_thumbnail'] = thumbnail
+                    if full_image:
+                        ad_data['creative_full_image'] = full_image
+
+                    # Get ad copy from object_story_spec
+                    story_spec = creative_data.get('object_story_spec', {})
+                    link_data = story_spec.get('link_data', {})
+
+                    if link_data:
+                        ad_data['creative_headline'] = link_data.get('name', '')
+                        ad_data['creative_message'] = link_data.get('message', '')
+                        ad_data['creative_description'] = link_data.get('description', '')
+                        ad_data['creative_link'] = link_data.get('link', '')
+                        cta = link_data.get('call_to_action', {})
+                        ad_data['creative_cta'] = cta.get('type', '').replace('_', ' ').title() if cta else ''
+
+                except Exception as e:
+                    logger.debug(f"Could not fetch creative details for {creative_id}: {e}")
+
+            # Add stats if requested
+            if include_stats:
+                try:
+                    # Fetch insights with date range (lifetime stats)
+                    from facebook_business.adobjects.ad import Ad
+                    fb_ad = Ad(ad.get('id'))
+
+                    insights = fb_ad.get_insights(
+                        fields=['spend', 'impressions', 'clicks', 'ctr', 'cpc', 'actions'],
+                        params={'date_preset': 'maximum'}
+                    )
+
+                    if insights and len(insights) > 0:
+                        insight = insights[0]
+
+                        # Get conversions
+                        conversions = 0
+                        actions = insight.get('actions', [])
+                        for action in actions:
+                            if action.get('action_type') in ['purchase', 'lead', 'complete_registration', 'offsite_conversion.fb_pixel_purchase']:
+                                conversions += int(action.get('value', 0))
+
+                        # Get metrics
+                        spend = float(insight.get('spend', 0))
+                        impressions = int(insight.get('impressions', 0))
+                        clicks = int(insight.get('clicks', 0))
+
+                        # Calculate CTR and CPC
+                        ctr = (clicks / impressions * 100) if impressions > 0 else 0
+                        cpc = (spend / clicks) if clicks > 0 else 0
+
+                        ad_data['stats'] = {
+                            'spend': spend,
+                            'impressions': impressions,
+                            'clicks': clicks,
+                            'ctr': round(ctr, 2),
+                            'cpc': round(cpc, 2),
+                            'conversions': conversions
+                        }
+                    else:
+                        ad_data['stats'] = {
+                            'spend': 0,
+                            'impressions': 0,
+                            'clicks': 0,
+                            'ctr': 0,
+                            'cpc': 0,
+                            'conversions': 0
+                        }
+                except Exception as e:
+                    logger.warning(f"Failed to get insights for ad {ad.get('id')}: {e}")
+                    ad_data['stats'] = {
+                        'spend': 0,
+                        'impressions': 0,
+                        'clicks': 0,
+                        'ctr': 0,
+                        'cpc': 0,
+                        'conversions': 0
+                    }
+
+            formatted_ads.append(ad_data)
 
         return {"ads": formatted_ads, "count": len(formatted_ads)}
     except Exception as e:
         logger.error(f"Error fetching all ads: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1433,6 +1616,486 @@ async def download_creative_image(creative_id: str):
         logger.error(f"Failed to download creative image: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/debug/campaign/{campaign_id}")
+async def debug_campaign_stats(campaign_id: str):
+    """Debug endpoint to see all stats for a campaign and its ads."""
+    try:
+        client, _, _, _, _ = get_clients()
+
+        # Get campaign info
+        from facebook_business.adobjects.campaign import Campaign
+        campaign_obj = Campaign(campaign_id, api=client.api)
+        campaign = campaign_obj.api_get(fields=[
+            'id',
+            'name',
+            'status',
+            'objective',
+            'daily_budget',
+            'insights{spend,impressions,clicks,actions}'
+        ])
+
+        campaign_data = dict(campaign)
+
+        # Get all ad sets in this campaign
+        adsets = client.get_adsets(campaign_id=campaign_id)
+        adsets_data = []
+
+        for adset in adsets:
+            adset_info = {
+                'id': adset.get('id'),
+                'name': adset.get('name'),
+                'status': adset.get('status')
+            }
+
+            # Get ads in this ad set
+            ads = client.ad_account.get_ads(
+                params={'adset_id': adset.get('id')},
+                fields=['id', 'name', 'status', 'creative', 'insights{spend,impressions,clicks,actions,ctr,cpc}']
+            )
+
+            ads_data = []
+            for ad in ads:
+                ad_dict = dict(ad)
+                ads_data.append({
+                    'id': ad_dict.get('id'),
+                    'name': ad_dict.get('name'),
+                    'status': ad_dict.get('status'),
+                    'creative_id': ad_dict.get('creative', {}).get('id'),
+                    'insights': ad_dict.get('insights', {}).get('data', [])
+                })
+
+            adset_info['ads'] = ads_data
+            adsets_data.append(adset_info)
+
+        return {
+            'campaign': campaign_data,
+            'adsets': adsets_data,
+            'adsets_count': len(adsets_data),
+            'total_ads': sum(len(adset['ads']) for adset in adsets_data)
+        }
+
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/debug/ad-insights")
+async def debug_ad_insights():
+    """Debug endpoint to check what insights we're getting from Facebook."""
+    try:
+        from facebook_business.adobjects.ad import Ad
+        client, _, _, _, _ = get_clients()
+
+        # Get all ads
+        ads = client.ad_account.get_ads(
+            fields=['id', 'name', 'status'],
+            params={'limit': 10}
+        )
+
+        results = []
+        for ad in ads:
+            fb_ad = Ad(ad.get('id'))
+
+            # Try to get insights
+            try:
+                insights = fb_ad.get_insights(
+                    fields=['spend', 'impressions', 'clicks', 'reach'],
+                    params={'date_preset': 'maximum'}
+                )
+
+                insights_data = []
+                for insight in insights:
+                    insights_data.append(dict(insight))
+
+                results.append({
+                    'ad_id': ad.get('id'),
+                    'ad_name': ad.get('name'),
+                    'insights_count': len(insights_data),
+                    'insights': insights_data
+                })
+            except Exception as e:
+                results.append({
+                    'ad_id': ad.get('id'),
+                    'ad_name': ad.get('name'),
+                    'error': str(e),
+                    'traceback': traceback.format_exc()
+                })
+
+        return {'results': results}
+    except Exception as e:
+        return {'error': str(e), 'traceback': traceback.format_exc()}
+
+@app.get("/api/debug/conversion-tracking")
+async def debug_conversion_tracking():
+    """Check conversion tracking setup."""
+    try:
+        from facebook_business.adobjects.adspixel import AdsPixel
+        from facebook_business.adobjects.customconversion import CustomConversion
+        client, _, _, _, _ = get_clients()
+
+        result = {
+            'pixels': [],
+            'custom_conversions': [],
+            'campaigns': [],
+            'adsets': []
+        }
+
+        # Get pixels
+        try:
+            pixels = client.ad_account.get_ads_pixels(
+                fields=['name', 'code', 'is_created_by_business', 'last_fired_time']
+            )
+            for pixel in pixels:
+                result['pixels'].append({
+                    'id': pixel.get('id'),
+                    'name': pixel.get('name'),
+                    'last_fired': pixel.get('last_fired_time'),
+                    'created_by_business': pixel.get('is_created_by_business')
+                })
+        except Exception as e:
+            result['pixels_error'] = str(e)
+
+        # Get custom conversions
+        try:
+            conversions = client.ad_account.get_custom_conversions(
+                fields=['name', 'pixel', 'rule', 'event_source_type']
+            )
+            for conv in conversions:
+                result['custom_conversions'].append({
+                    'id': conv.get('id'),
+                    'name': conv.get('name'),
+                    'pixel_id': conv.get('pixel', {}).get('id'),
+                    'event_source': conv.get('event_source_type')
+                })
+        except Exception as e:
+            result['custom_conversions_error'] = str(e)
+
+        # Check campaign objectives
+        try:
+            campaigns = client.get_campaigns()
+            for campaign in campaigns[:10]:
+                result['campaigns'].append({
+                    'id': campaign.get('id'),
+                    'name': campaign.get('name'),
+                    'objective': campaign.get('objective'),
+                    'status': campaign.get('status')
+                })
+        except Exception as e:
+            result['campaigns_error'] = str(e)
+
+        # Check ad set optimization goals
+        try:
+            adsets = client.get_adsets()
+            for adset in list(adsets)[:10]:
+                result['adsets'].append({
+                    'id': adset.get('id'),
+                    'name': adset.get('name'),
+                    'optimization_goal': adset.get('optimization_goal'),
+                    'status': adset.get('status')
+                })
+        except Exception as e:
+            result['adsets_error'] = str(e)
+
+        return result
+    except Exception as e:
+        return {'error': str(e), 'traceback': traceback.format_exc()}
+
+@app.get("/api/debug/stats-summary")
+async def debug_stats_summary():
+    """Get a summary of all campaign/ad stats to debug discrepancies."""
+    try:
+        client, campaign_manager, _, _, _ = get_clients()
+
+        # Get all campaigns with insights
+        campaigns = campaign_manager.list_campaigns(include_insights=True)
+
+        summary = []
+        for campaign in campaigns:
+            campaign_spend = campaign.get('insights', {}).get('spend', 0)
+            campaign_impressions = campaign.get('insights', {}).get('impressions', 0)
+
+            # Get all ads in this campaign
+            ads = client.ad_account.get_ads(
+                params={'campaign_id': campaign['id']},
+                fields=['id', 'name', 'status', 'insights{spend,impressions,clicks}']
+            )
+
+            ads_total_spend = 0
+            ads_total_impressions = 0
+            ads_list = []
+
+            for ad in ads:
+                ad_dict = dict(ad)
+                insights = ad_dict.get('insights', {}).get('data', [])
+                ad_spend = 0
+                ad_impressions = 0
+
+                if insights:
+                    ad_spend = float(insights[0].get('spend', 0))
+                    ad_impressions = int(insights[0].get('impressions', 0))
+
+                ads_total_spend += ad_spend
+                ads_total_impressions += ad_impressions
+
+                ads_list.append({
+                    'id': ad_dict.get('id'),
+                    'name': ad_dict.get('name'),
+                    'status': ad_dict.get('status'),
+                    'spend': ad_spend,
+                    'impressions': ad_impressions
+                })
+
+            summary.append({
+                'campaign_id': campaign['id'],
+                'campaign_name': campaign['name'],
+                'campaign_status': campaign['status'],
+                'campaign_spend': float(campaign_spend),
+                'campaign_impressions': int(campaign_impressions),
+                'ads_total_spend': round(ads_total_spend, 2),
+                'ads_total_impressions': ads_total_impressions,
+                'discrepancy_spend': round(float(campaign_spend) - ads_total_spend, 2),
+                'discrepancy_impressions': int(campaign_impressions) - ads_total_impressions,
+                'ads_count': len(ads_list),
+                'ads': ads_list
+            })
+
+        return {
+            'summary': summary,
+            'total_campaigns': len(summary)
+        }
+
+    except Exception as e:
+        logger.error(f"Debug stats error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Conversion Tracking Endpoints
+
+@app.post("/api/conversions/track")
+async def track_conversion(
+    event_name: str = Form(...),
+    user_email: Optional[str] = Form(None),
+    value: Optional[float] = Form(None),
+    currency: str = Form("USD"),
+    event_source_url: Optional[str] = Form(None),
+    content_name: Optional[str] = Form(None),
+    content_ids: Optional[str] = Form(None),
+    num_items: Optional[int] = Form(None),
+    test_event_code: Optional[str] = Form(None)
+):
+    """
+    Track a conversion event via Conversions API.
+
+    This endpoint allows you to send conversion events from your server/webhook.
+    Useful for tracking purchases, leads, registrations, etc.
+    """
+    try:
+        client = get_client()
+        config = client.config
+
+        # Check if pixel_id is configured
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Pixel ID not configured. Add pixel_id to config/config.yaml"
+            )
+
+        # Initialize tracker
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        # Parse content_ids if provided
+        content_ids_list = None
+        if content_ids:
+            content_ids_list = [id.strip() for id in content_ids.split(',')]
+
+        # Track the event
+        result = tracker.track_event(
+            event_name=event_name,
+            user_email=user_email,
+            value=value,
+            currency=currency,
+            event_source_url=event_source_url,
+            content_name=content_name,
+            content_ids=content_ids_list,
+            num_items=num_items,
+            test_event_code=test_event_code
+        )
+
+        if result['success']:
+            return {
+                "success": True,
+                "event_name": event_name,
+                "message": "Event tracked successfully"
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error', 'Unknown error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Conversion tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/conversions/purchase")
+async def track_purchase(
+    user_email: str = Form(...),
+    value: float = Form(...),
+    currency: str = Form("USD"),
+    product_ids: Optional[str] = Form(None),
+    num_items: Optional[int] = Form(None)
+):
+    """Track a purchase/transaction event."""
+    try:
+        client = get_client()
+        config = client.config
+
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(status_code=400, detail="Pixel ID not configured")
+
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        content_ids = None
+        if product_ids:
+            content_ids = [id.strip() for id in product_ids.split(',')]
+
+        result = tracker.track_purchase(
+            user_email=user_email,
+            value=value,
+            currency=currency,
+            content_ids=content_ids,
+            num_items=num_items
+        )
+
+        if result['success']:
+            return {
+                "success": True,
+                "event_name": "Purchase",
+                "value": value,
+                "currency": currency
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Purchase tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/conversions/lead")
+async def track_lead(
+    user_email: str = Form(...),
+    value: Optional[float] = Form(None),
+    content_name: Optional[str] = Form(None)
+):
+    """Track a lead generation event."""
+    try:
+        client = get_client()
+        config = client.config
+
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(status_code=400, detail="Pixel ID not configured")
+
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        result = tracker.track_lead(
+            user_email=user_email,
+            value=value,
+            content_name=content_name
+        )
+
+        if result['success']:
+            return {
+                "success": True,
+                "event_name": "Lead",
+                "email": user_email
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Lead tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/conversions/registration")
+async def track_registration(
+    user_email: str = Form(...),
+    user_first_name: Optional[str] = Form(None),
+    user_last_name: Optional[str] = Form(None)
+):
+    """Track a user registration/signup event."""
+    try:
+        client = get_client()
+        config = client.config
+
+        pixel_id = config.get('facebook', {}).get('pixel_id')
+        if not pixel_id:
+            raise HTTPException(status_code=400, detail="Pixel ID not configured")
+
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        result = tracker.track_registration(
+            user_email=user_email,
+            user_first_name=user_first_name,
+            user_last_name=user_last_name
+        )
+
+        if result['success']:
+            return {
+                "success": True,
+                "event_name": "CompleteRegistration",
+                "email": user_email
+            }
+        else:
+            raise HTTPException(status_code=500, detail=result.get('error'))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration tracking error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/conversions/events")
+async def list_conversion_events():
+    """Get list of standard Facebook conversion event types."""
+    try:
+        events = ConversionTracker.STANDARD_EVENTS
+        return {
+            "events": [
+                {"name": name, "description": desc}
+                for name, desc in events.items()
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error listing events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -178,6 +178,6 @@ class CampaignManager:
         return self.create_campaign(
             name=name,
             objective=source['objective'],
-            daily_budget=source.get('daily_budget', 5000) / 100,  # Convert cents to USD
+            daily_budget=int(source.get('daily_budget', 5000)) / 100,  # Convert cents to USD
             status='PAUSED'
         )

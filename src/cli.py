@@ -18,6 +18,7 @@ from src.optimization.ab_testing import ABTestManager
 from src.automation.rules_engine import RulesEngine, Rule, Condition, Action, ConditionOperator, ActionType
 from src.automation.scheduler import CampaignScheduler, ScheduledEvent, ScheduleType, ScheduleAction
 from src.automation.workflows import WorkflowAutomation
+from src.conversion.tracker import ConversionTracker
 
 console = Console()
 
@@ -99,7 +100,7 @@ def list(ctx, status, format):
                     camp['name'],
                     camp.get('objective', 'N/A'),
                     camp.get('status', 'N/A'),
-                    f"${camp.get('daily_budget', 0) / 100:.2f}"
+                    f"${int(camp.get('daily_budget', 0)) / 100:.2f}"
                 )
 
             console.print(table)
@@ -725,6 +726,307 @@ def emergency_pause(ctx, reason, dry_run):
             console.print("\n[red]Paused campaigns:[/red]")
             for item in results['paused']:
                 console.print(f"  • {item['campaign_name']}")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+# Conversion Tracking Commands
+
+@cli.group()
+def conversion():
+    """Track conversion events (Conversions API)."""
+    pass
+
+
+@conversion.command('track')
+@click.option('--event', required=True, help='Event name (e.g., Purchase, Lead, CompleteRegistration)')
+@click.option('--email', help='User email')
+@click.option('--value', type=float, help='Transaction value (for Purchase events)')
+@click.option('--currency', default='USD', help='Currency code (default: USD)')
+@click.option('--url', help='URL where event occurred')
+@click.option('--content-name', help='Product/content name')
+@click.option('--content-ids', help='Comma-separated product IDs')
+@click.option('--num-items', type=int, help='Number of items')
+@click.option('--test-code', help='Test event code from Facebook (for testing)')
+@click.pass_context
+def track_event(ctx, event, email, value, currency, url, content_name, content_ids, num_items, test_code):
+    """Send a conversion event to Facebook."""
+    client = ctx.obj['client']
+    config = client.config
+
+    # Check if pixel_id is configured
+    pixel_id = config.get('facebook', {}).get('pixel_id')
+    if not pixel_id:
+        console.print("[red]Error:[/red] pixel_id not configured in config.yaml")
+        console.print("\nAdd your Facebook Pixel ID to config/config.yaml:")
+        console.print("facebook:")
+        console.print("  pixel_id: \"YOUR_PIXEL_ID\"")
+        sys.exit(1)
+
+    try:
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        # Parse content_ids if provided
+        content_ids_list = None
+        if content_ids:
+            content_ids_list = [id.strip() for id in content_ids.split(',')]
+
+        # Track the event
+        result = tracker.track_event(
+            event_name=event,
+            user_email=email,
+            value=value,
+            currency=currency,
+            event_source_url=url,
+            content_name=content_name,
+            content_ids=content_ids_list,
+            num_items=num_items,
+            test_event_code=test_code
+        )
+
+        if result['success']:
+            console.print(f"[green]✓[/green] {event} event tracked successfully!")
+            if test_code:
+                console.print(f"[yellow]ℹ[/yellow] Test event sent. Check Facebook Events Manager Test Events.")
+        else:
+            console.print(f"[red]Error:[/red] {result['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@conversion.command('test')
+@click.pass_context
+def test_tracking(ctx):
+    """Send a test PageView event to verify setup."""
+    client = ctx.obj['client']
+    config = client.config
+
+    # Check if pixel_id is configured
+    pixel_id = config.get('facebook', {}).get('pixel_id')
+    if not pixel_id:
+        console.print("[red]Error:[/red] pixel_id not configured in config.yaml")
+        sys.exit(1)
+
+    try:
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        console.print("[cyan]Sending test PageView event...[/cyan]")
+
+        result = tracker.track_page_view(
+            url="https://example.com/test",
+            user_email="test@example.com"
+        )
+
+        if result['success']:
+            console.print(f"[green]✓[/green] Test event sent successfully!")
+            console.print(f"\nPixel ID: {pixel_id}")
+            console.print("\nCheck Facebook Events Manager to verify the event:")
+            console.print("https://business.facebook.com/events_manager2/list/pixel/" + pixel_id)
+        else:
+            console.print(f"[red]Error:[/red] {result['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@conversion.command('events')
+def list_events():
+    """List all standard Facebook event types."""
+    tracker_class = ConversionTracker
+    events = tracker_class.STANDARD_EVENTS
+
+    table = Table(title="Standard Facebook Events")
+    table.add_column("Event Name", style="cyan")
+    table.add_column("Description", style="green")
+
+    for event_name, description in events.items():
+        table.add_row(event_name, description)
+
+    console.print(table)
+    console.print("\n[yellow]Usage:[/yellow] fbads conversion track --event <EVENT_NAME> [options]")
+
+
+@conversion.command('create-pixel')
+@click.option('--name', required=True, help='Name for the pixel (e.g., "My Website Pixel")')
+@click.option('--save-to-config', is_flag=True, help='Automatically save pixel_id to config.yaml')
+@click.pass_context
+def create_pixel(ctx, name, save_to_config):
+    """Create a new Facebook Pixel via API."""
+    client = ctx.obj['client']
+
+    try:
+        console.print(f"[cyan]Creating pixel: {name}...[/cyan]")
+
+        pixel = client.create_pixel(name=name)
+
+        console.print(f"\n[green]✓[/green] Pixel created successfully!")
+        console.print(f"\nPixel ID: [cyan]{pixel['id']}[/cyan]")
+        console.print(f"Name: {pixel['name']}")
+
+        if save_to_config:
+            # Update config file with pixel_id
+            import yaml
+            from pathlib import Path
+
+            config_path = Path("config/config.yaml")
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+
+            config['facebook']['pixel_id'] = pixel['id']
+
+            with open(config_path, 'w') as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+            console.print(f"\n[green]✓[/green] Pixel ID saved to config/config.yaml")
+
+        console.print("\n[yellow]Next steps:[/yellow]")
+        if not save_to_config:
+            console.print("1. Add this pixel_id to your config/config.yaml:")
+            console.print(f"   facebook:")
+            console.print(f"     pixel_id: \"{pixel['id']}\"")
+            console.print("")
+        console.print("2. Test it with: [cyan]fbads conversion test[/cyan]")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@conversion.command('list-pixels')
+@click.pass_context
+def list_pixels(ctx):
+    """List all Facebook Pixels for this ad account."""
+    client = ctx.obj['client']
+
+    try:
+        pixels = client.get_pixels()
+
+        if not pixels:
+            console.print("[yellow]No pixels found for this ad account.[/yellow]")
+            console.print("\nCreate one with: [cyan]fbads conversion create-pixel --name \"My Pixel\"[/cyan]")
+            return
+
+        table = Table(title="Facebook Pixels")
+        table.add_column("Pixel ID", style="cyan")
+        table.add_column("Name", style="green")
+
+        for pixel in pixels:
+            table.add_row(
+                pixel['id'],
+                pixel.get('name', 'N/A')
+            )
+
+        console.print(table)
+
+        # Check if any pixel is configured in config
+        config = client.config
+        configured_pixel = config.get('facebook', {}).get('pixel_id')
+
+        if configured_pixel:
+            console.print(f"\n[green]✓[/green] Currently configured pixel: {configured_pixel}")
+        else:
+            console.print("\n[yellow]ℹ[/yellow] No pixel configured in config.yaml")
+            console.print("Add one of these pixel IDs to your config:")
+            console.print("facebook:")
+            console.print("  pixel_id: \"<PIXEL_ID>\"")
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@conversion.command('purchase')
+@click.option('--email', required=True, help='Customer email')
+@click.option('--value', required=True, type=float, help='Purchase amount')
+@click.option('--currency', default='USD', help='Currency code')
+@click.option('--product-ids', help='Comma-separated product IDs')
+@click.option('--num-items', type=int, help='Number of items purchased')
+@click.pass_context
+def track_purchase(ctx, email, value, currency, product_ids, num_items):
+    """Track a purchase/transaction event."""
+    client = ctx.obj['client']
+    config = client.config
+
+    pixel_id = config.get('facebook', {}).get('pixel_id')
+    if not pixel_id:
+        console.print("[red]Error:[/red] pixel_id not configured")
+        sys.exit(1)
+
+    try:
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        content_ids = None
+        if product_ids:
+            content_ids = [id.strip() for id in product_ids.split(',')]
+
+        result = tracker.track_purchase(
+            user_email=email,
+            value=value,
+            currency=currency,
+            content_ids=content_ids,
+            num_items=num_items
+        )
+
+        if result['success']:
+            console.print(f"[green]✓[/green] Purchase event tracked!")
+            console.print(f"Value: {currency} {value}")
+        else:
+            console.print(f"[red]Error:[/red] {result['error']}")
+            sys.exit(1)
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@conversion.command('lead')
+@click.option('--email', required=True, help='Lead email')
+@click.option('--value', type=float, help='Lead value')
+@click.option('--content-name', help='Form/content name')
+@click.pass_context
+def track_lead(ctx, email, value, content_name):
+    """Track a lead generation event."""
+    client = ctx.obj['client']
+    config = client.config
+
+    pixel_id = config.get('facebook', {}).get('pixel_id')
+    if not pixel_id:
+        console.print("[red]Error:[/red] pixel_id not configured")
+        sys.exit(1)
+
+    try:
+        tracker = ConversionTracker(
+            access_token=config['facebook']['access_token'],
+            pixel_id=pixel_id
+        )
+
+        result = tracker.track_lead(
+            user_email=email,
+            value=value,
+            content_name=content_name
+        )
+
+        if result['success']:
+            console.print(f"[green]✓[/green] Lead event tracked!")
+        else:
+            console.print(f"[red]Error:[/red] {result['error']}")
+            sys.exit(1)
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

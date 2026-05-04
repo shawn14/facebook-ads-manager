@@ -13,6 +13,11 @@ facebook:
   # Your Facebook Page ID (required for creating creatives)
   page_id: "YOUR_PAGE_ID"
 
+  # Your Facebook Pixel ID (for conversion tracking via Conversions API)
+  # Get this from: https://business.facebook.com/events_manager2
+  # Leave empty if you don't want to use conversion tracking
+  pixel_id: ""
+
   # API version
   api_version: "v19.0"
 

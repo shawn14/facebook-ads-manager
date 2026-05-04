@@ -10,6 +10,7 @@ from facebook_business.adobjects.adsinsights import AdsInsights
 from facebook_business.adobjects.adcreative import AdCreative
 from facebook_business.adobjects.adimage import AdImage
 from facebook_business.adobjects.advideo import AdVideo
+from facebook_business.adobjects.adspixel import AdsPixel
 from loguru import logger
 import yaml
 from pathlib import Path
@@ -154,7 +155,9 @@ class FacebookAdsClient:
         optimization_goal: str = "LINK_CLICKS",
         billing_event: str = "IMPRESSIONS",
         bid_strategy: str = "LOWEST_COST_WITHOUT_CAP",
-        status: str = "PAUSED"
+        bid_amount: Optional[int] = None,
+        status: str = "PAUSED",
+        promoted_object: Optional[Dict] = None
     ) -> AdSet:
         """Create a new ad set.
 
@@ -166,7 +169,10 @@ class FacebookAdsClient:
             optimization_goal: Optimization goal
             billing_event: Billing event
             bid_strategy: Bid strategy
+            bid_amount: Max bid in cents (required for LOWEST_COST_WITH_BID_CAP)
             status: Ad set status
+            promoted_object: Promoted object (for app installs, page likes, etc.)
+                            Example: {'application_id': '123', 'object_store_url': 'https://...'}
 
         Returns:
             Created ad set object
@@ -181,6 +187,12 @@ class FacebookAdsClient:
             'bid_strategy': bid_strategy,
             'status': status,
         }
+
+        if bid_amount is not None:
+            params['bid_amount'] = bid_amount
+
+        if promoted_object:
+            params['promoted_object'] = promoted_object
 
         adset = self.ad_account.create_ad_set(params=params)
         logger.info(f"Created ad set: {name} (ID: {adset['id']})")
@@ -214,6 +226,32 @@ class FacebookAdsClient:
             adsets = self.ad_account.get_ad_sets(fields=fields)
 
         return list(adsets)
+
+    def update_adset(self, adset_id: str, updates: Dict[str, Any]) -> AdSet:
+        """Update an ad set.
+
+        Args:
+            adset_id: Ad set ID
+            updates: Fields to update. To set a bid cap, pass:
+                     {'bid_strategy': 'LOWEST_COST_WITH_BID_CAP', 'bid_amount': <cents>}
+                     To remove a bid cap:
+                     {'bid_strategy': 'LOWEST_COST_WITHOUT_CAP'}
+
+        Returns:
+            Updated ad set object
+        """
+        adset = AdSet(adset_id)
+        adset.api_update(params=updates)
+        logger.info(f"Updated ad set {adset_id}: {updates}")
+        return adset
+
+    def pause_adset(self, adset_id: str) -> AdSet:
+        """Pause an ad set."""
+        return self.update_adset(adset_id, {'status': 'PAUSED'})
+
+    def activate_adset(self, adset_id: str) -> AdSet:
+        """Activate an ad set."""
+        return self.update_adset(adset_id, {'status': 'ACTIVE'})
 
     # Creative Management
 
@@ -686,6 +724,49 @@ class FacebookAdsClient:
         return [dict(insight) for insight in insights]
 
     # Utility Methods
+
+    def create_pixel(self, name: str) -> Dict:
+        """
+        Create a Facebook Pixel for conversion tracking.
+
+        Args:
+            name: Name for the pixel (e.g., "My Website Pixel")
+
+        Returns:
+            Dict with pixel_id and pixel details
+        """
+        try:
+            params = {
+                'name': name
+            }
+
+            pixel = self.ad_account.create_ads_pixel(params=params)
+            pixel_id = pixel['id']
+
+            logger.info(f"Created pixel: {name} (ID: {pixel_id})")
+
+            return {
+                'id': pixel_id,
+                'name': name,
+                'code': pixel.get('code'),  # Pixel code snippet if available
+            }
+        except Exception as e:
+            logger.error(f"Failed to create pixel: {e}")
+            raise
+
+    def get_pixels(self) -> List[Dict]:
+        """
+        Get all pixels for this ad account.
+
+        Returns:
+            List of pixel dictionaries
+        """
+        try:
+            pixels = self.ad_account.get_ads_pixels(fields=['id', 'name', 'code'])
+            return [dict(pixel) for pixel in pixels]
+        except Exception as e:
+            logger.error(f"Failed to get pixels: {e}")
+            raise
 
     def get_account_info(self) -> Dict:
         """Get ad account information."""
